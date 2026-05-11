@@ -1,0 +1,146 @@
+# GitHub Actions workflow for publishing plugins on merge to main
+# This workflow builds a signed release APK for each changed plugin, generates an index,
+# and pushes the artifacts to the gh‑pages branch.
+
+name: Plugin Publish
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'plugins/plugins/**/app/**'
+      - 'plugins/plugins/**/app/src/**'
+      - 'plugins/plugins/**/app/assets/**'
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout repository (including gh‑pages)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Use Java 17 (required by Gradle 8.x) and Gradle 8.5 which matches AGP 8.2.
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Gradle (8.5)
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.5'
+          cache-read-only: false
+
+      - name: Install Python (for index generation)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install required Python packages
+        run: pip install -r .github/scripts/requirements.txt || true
+
+      - name: Determine changed plugin directories (since last commit)
+        id: changed
+        run: |
+          # List plugin directories that have any changes under the 'app' folder.
+          git diff --name-only ${{ github.event.before }} ${{ github.sha }} \
+            | grep '^plugins/plugins/' \
+            | grep '/app/' \
+            | awk -F'/app/' '{print $1}' \
+            | sort -u \
+            > changed_plugins.txt
+          if [ -s changed_plugins.txt ]; then
+            echo "plugins=$(paste -sd',' changed_plugins.txt)" >> $GITHUB_OUTPUT
+          else
+            echo "plugins=" >> $GITHUB_OUTPUT
+          fi
+      - name: Fail if no plugin changed
+        if: steps.changed.outputs.plugins == ''
+        run: |
+          echo "No plugin directories changed – nothing to publish." && exit 0
+      - name: Build signed release APKs
+        if: steps.changed.outputs.plugins != ''
+        env:
+          SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+          SIGNING_KEYSTORE_PASSWORD: ${{ secrets.SIGNING_KEYSTORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          # Decode the keystore into the working directory.
+          echo "$SIGNING_KEYSTORE_BASE64" | base64 -d > signing.jks
+          for PLUGIN in $(echo "${{ steps.changed.outputs.plugins }}" | tr ',' '\n'); do
+            echo "Building plugin $PLUGIN"
+            gradle -p "$PLUGIN" \
+              -Pandroid.injected.signing.store.file=$(pwd)/signing.jks \
+              -Pandroid.injected.signing.store.password=$SIGNING_KEYSTORE_PASSWORD \
+              -Pandroid.injected.signing.key.alias=$SIGNING_KEY_ALIAS \
+              -Pandroid.injected.signing.key.password=$SIGNING_KEY_PASSWORD \
+              :app:assembleRelease --no-daemon
+          done
+      - name: Collect built APKs
+        if: steps.changed.outputs.plugins != ''
+        run: |
+          mkdir -p apks
+          for PLUGIN in $(echo "${{ steps.changed.outputs.plugins }}" | tr ',' '\n'); do
+            PLUGIN_ID=$(python -c "import json; print(json.load(open('$PLUGIN/app/src/main/assets/plugin.json'))['id'])")
+            cp "$PLUGIN/app/build/outputs/apk/release"/*.apk "apks/${PLUGIN_ID}.apk"
+          done
+      - name: Prepare gh‑pages worktree
+        if: steps.changed.outputs.plugins != ''
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          git worktree add -B gh-pages gh-pages origin/gh-pages || git worktree add -B gh-pages gh-pages
+
+      - name: Copy APKs and READMEs to gh‑pages
+        if: steps.changed.outputs.plugins != ''
+        run: |
+          mkdir -p gh-pages/apks
+          cp apks/*.apk gh-pages/apks/
+
+          # Mirror README.md files at author / collection / screen levels.
+          for PLUGIN in $(echo "${{ steps.changed.outputs.plugins }}" | tr ',' '\n'); do
+            # PLUGIN = plugins/plugins/<author>/<collection>/<screen>
+            RELATIVE=${PLUGIN#plugins/plugins/}       # <author>/<collection>/<screen>
+            AUTHOR=$(echo "$RELATIVE" | cut -d'/' -f1)
+            COLLECTION=$(echo "$RELATIVE" | cut -d'/' -f2)
+            SCREEN=$(echo "$RELATIVE" | cut -d'/' -f3)
+
+            for SRC_PATH in \
+              "plugins/plugins/$AUTHOR:readmes/$AUTHOR" \
+              "plugins/plugins/$AUTHOR/$COLLECTION:readmes/$AUTHOR/$COLLECTION" \
+              "plugins/plugins/$AUTHOR/$COLLECTION/$SCREEN:readmes/$AUTHOR/$COLLECTION/$SCREEN"
+            do
+              SRC="${SRC_PATH%%:*}"
+              DST="${SRC_PATH##*:}"
+              if [ -f "$SRC/README.md" ]; then
+                mkdir -p "gh-pages/$DST"
+                cp "$SRC/README.md" "gh-pages/$DST/README.md"
+              fi
+            done
+          done
+
+      - name: Generate index.json
+        if: steps.changed.outputs.plugins != ''
+        run: |
+          BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
+          python .github/scripts/generate-index.py \
+            --apks-dir apks \
+            --plugins-dir plugins/plugins \
+            --base-url "$BASE_URL" \
+            > gh-pages/index.json
+      - name: Commit and push to gh‑pages
+        if: steps.changed.outputs.plugins != ''
+        run: |
+          cd gh-pages
+          git add .
+          git commit -m "Publish plugins $(date +'%Y-%m-%d %H:%M:%S')"
+          git push origin gh-pages

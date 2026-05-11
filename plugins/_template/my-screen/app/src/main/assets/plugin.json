@@ -1,0 +1,9 @@
+{
+  "id":          "com.example.myplugin",
+  "name":        "My Screen",
+  "description": "A minimal template plugin. Replace all fields before submitting.",
+  "author":      "your-alias",
+  "version":     "1.0.0",
+  "apiVersion":  1,
+  "entryClass":  "com.example.myplugin.MyScreen"
+}
