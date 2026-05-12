@@ -185,7 +185,7 @@ class KartRenderer implements GLSurfaceView.Renderer {
 
         // Camera: rear-left quarter view, slightly elevated.
         Matrix.setLookAtM(mView, 0,
-                /* eye    */ 1.5f, 1.2f, 2.5f,
+                /* eye    */ 2.0f, 1.8f, 3.5f,
                 /* target */ 0f,   0.2f, 0f,
                 /* up     */ 0f,   1f,   0f);
 
@@ -230,7 +230,7 @@ class KartRenderer implements GLSurfaceView.Renderer {
         } else {
             // Honda Civic full lock ≈ ±270°  →  visual ±30°, hard-clamped.
             float steer = Float.isNaN(mSteeringDeg) ? 0f : mSteeringDeg;
-            yaw = Math.max(-30f, Math.min(30f, steer * (30f / 270f)));
+            yaw = Math.max(-60f, Math.min(60f, -4*steer * (60f / 270f)));
         }
         Matrix.rotateM(mModel, 0, yaw, 0f, 1f, 0f);
         Matrix.rotateM(mModel, 0, -150f, 0f, 1f, 0f); // model rest-pose offset
