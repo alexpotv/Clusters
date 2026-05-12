@@ -310,7 +310,10 @@ class KartRenderer implements GLSurfaceView.Renderer {
         // ---- Rainbow road (LKAS active) ----
         mRoadOffset = (mRoadOffset + dt * 0.4f) % 1.0f;
         if (mLkasActive) {
-            Matrix.multiplyMM(mRoadMVP, 0, mProjection, 0, mView, 0);
+            Matrix.setIdentityM(mModel, 0);
+            Matrix.rotateM(mModel, 0, 30f, 0f, 1f, 0f);
+            Matrix.multiplyMM(mMV, 0, mView, 0, mModel, 0);
+            Matrix.multiplyMM(mRoadMVP, 0, mProjection, 0, mMV, 0);
             GLES20.glEnable(GLES20.GL_BLEND);
             GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA);
             GLES20.glDepthMask(false);
