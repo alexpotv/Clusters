@@ -90,15 +90,22 @@ class KartRenderer implements GLSurfaceView.Renderer {
 
     // ---- Rainbow road shaders -----------------------------------------------
 
+    // Max lateral deflection of the far end of the road at full steering lock (world units).
+    private static final float ROAD_CURVE_FACTOR = 6.0f;
+
     private static final String ROAD_VERT_SRC =
-        "attribute vec3 aPos;\n"     +
-        "attribute vec2 aUv;\n"      +
-        "uniform mat4 uMVP;\n"       +
-        "uniform float uOffset;\n"   +
-        "varying vec2 vUv;\n"        +
-        "void main() {\n"            +
+        "attribute vec3 aPos;\n"      +
+        "attribute vec2 aUv;\n"       +
+        "uniform mat4 uMVP;\n"        +
+        "uniform float uOffset;\n"    +
+        "uniform float uCurve;\n"     +
+        "varying vec2 vUv;\n"         +
+        "void main() {\n"             +
+        // t=0 at near end (aUv.y=3), t=1 at far end (aUv.y=0) — quadratic falloff.
+        "  float t = 1.0 - aUv.y / 3.0;\n" +
+        "  vec3 p = vec3(aPos.x + uCurve * t * t, aPos.y, aPos.z);\n" +
         "  vUv = vec2(aUv.x, aUv.y - uOffset);\n" +
-        "  gl_Position = uMVP * vec4(aPos, 1.0);\n" +
+        "  gl_Position = uMVP * vec4(p, 1.0);\n" +
         "}";
 
     private static final String ROAD_FRAG_SRC =
@@ -134,7 +141,7 @@ class KartRenderer implements GLSurfaceView.Renderer {
 
     private int mRoadProgram;
     private int mRoadAttr_aPos, mRoadAttr_aUv;
-    private int mRoadUni_uMVP, mRoadUni_uOffset, mRoadUni_uTex;
+    private int mRoadUni_uMVP, mRoadUni_uOffset, mRoadUni_uCurve, mRoadUni_uTex;
     private int mRoadTex;
     private java.nio.FloatBuffer mRoadVbo;
 
@@ -229,6 +236,7 @@ class KartRenderer implements GLSurfaceView.Renderer {
         mRoadAttr_aUv    = GLES20.glGetAttribLocation (mRoadProgram, "aUv");
         mRoadUni_uMVP    = GLES20.glGetUniformLocation(mRoadProgram, "uMVP");
         mRoadUni_uOffset = GLES20.glGetUniformLocation(mRoadProgram, "uOffset");
+        mRoadUni_uCurve  = GLES20.glGetUniformLocation(mRoadProgram, "uCurve");
         mRoadUni_uTex    = GLES20.glGetUniformLocation(mRoadProgram, "uTex");
         mRoadTex         = createRainbowTexture();
         mRoadVbo         = buildRoadMesh();
@@ -319,8 +327,11 @@ class KartRenderer implements GLSurfaceView.Renderer {
             GLES20.glDepthMask(false);
             GLES20.glDisable(GLES20.GL_CULL_FACE);
             GLES20.glUseProgram(mRoadProgram);
+            float rawSteer = Float.isNaN(mSteeringDeg) ? 0f : mSteeringDeg;
+            float roadCurve = (rawSteer / 270f) * ROAD_CURVE_FACTOR;
             GLES20.glUniformMatrix4fv(mRoadUni_uMVP, 1, false, mRoadMVP, 0);
             GLES20.glUniform1f(mRoadUni_uOffset, mRoadOffset);
+            GLES20.glUniform1f(mRoadUni_uCurve,  roadCurve);
             GLES20.glUniform1i(mRoadUni_uTex, 0);
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mRoadTex);
@@ -331,7 +342,7 @@ class KartRenderer implements GLSurfaceView.Renderer {
             mRoadVbo.position(3);
             GLES20.glVertexAttribPointer(mRoadAttr_aUv,  2, GLES20.GL_FLOAT, false, roadStride, mRoadVbo);
             GLES20.glEnableVertexAttribArray(mRoadAttr_aUv);
-            GLES20.glDrawArrays(GLES20.GL_TRIANGLES, 0, 6);
+            GLES20.glDrawArrays(GLES20.GL_TRIANGLES, 0, 20 * 6);
             GLES20.glDepthMask(true);
             GLES20.glDisable(GLES20.GL_BLEND);
             GLES20.glEnable(GLES20.GL_CULL_FACE);
@@ -430,25 +441,39 @@ class KartRenderer implements GLSurfaceView.Renderer {
     }
 
     private static java.nio.FloatBuffer buildRoadMesh() {
-        // Flat quad at y=-0.15, width 1.6 (x), length 6.0 (z: -3..+3).
-        // CCW winding from +Y so the face is visible from the camera above.
-        // UV: u across width (0..1), v along length (0..3, tiles 3×).
-        float[] v = {
-            // triangle 1
-            -1.5f, -0.15f, -3.0f,  0f, 0f,
-             1.5f, -0.15f,  3.0f,  1f, 3f,
-             1.5f, -0.15f, -3.0f,  1f, 0f,
-            // triangle 2
-            -1.5f, -0.15f, -3.0f,  0f, 0f,
-            -1.5f, -0.15f,  3.0f,  0f, 3f,
-             1.5f, -0.15f,  3.0f,  1f, 3f,
-        };
+        // 20-segment subdivided strip so the shader curve looks smooth.
+        // CCW winding from +Y. UV: u across width (0..1), v along length (3..0, near→far).
+        int N = 20;
+        float hw = 1.5f, y = -0.15f;
+        float[] v = new float[N * 6 * 5];
+        int idx = 0;
+        for (int i = 0; i < N; i++) {
+            float t0 = (float)  i      / N;
+            float t1 = (float) (i + 1) / N;
+            float z0 =  3.0f - t0 * 6.0f; // near row (t=0 → z=+3)
+            float z1 =  3.0f - t1 * 6.0f; // far  row (t=1 → z=−3)
+            float vy0 = 3.0f * (1.0f - t0);
+            float vy1 = 3.0f * (1.0f - t1);
+            // CCW tri 1: near-left, far-right, near-right
+            idx = put5(v, idx, -hw, y, z0, 0f, vy0);
+            idx = put5(v, idx,  hw, y, z1, 1f, vy1);
+            idx = put5(v, idx,  hw, y, z0, 1f, vy0);
+            // CCW tri 2: near-left, far-left, far-right
+            idx = put5(v, idx, -hw, y, z0, 0f, vy0);
+            idx = put5(v, idx, -hw, y, z1, 0f, vy1);
+            idx = put5(v, idx,  hw, y, z1, 1f, vy1);
+        }
         java.nio.ByteBuffer bb = java.nio.ByteBuffer.allocateDirect(v.length * 4);
         bb.order(java.nio.ByteOrder.nativeOrder());
         java.nio.FloatBuffer fb = bb.asFloatBuffer();
         fb.put(v);
         fb.position(0);
         return fb;
+    }
+
+    private static int put5(float[] v, int i, float x, float y, float z, float u, float vv) {
+        v[i]   = x; v[i+1] = y; v[i+2] = z; v[i+3] = u; v[i+4] = vv;
+        return i + 5;
     }
 
     // ---- Shader helpers -----------------------------------------------------
