@@ -88,6 +88,27 @@ class KartRenderer implements GLSurfaceView.Renderer {
         "  gl_FragColor = vec4(rgb, col.a);\n" +
         "}";
 
+    // ---- Rainbow road shaders -----------------------------------------------
+
+    private static final String ROAD_VERT_SRC =
+        "attribute vec3 aPos;\n"     +
+        "attribute vec2 aUv;\n"      +
+        "uniform mat4 uMVP;\n"       +
+        "uniform float uOffset;\n"   +
+        "varying vec2 vUv;\n"        +
+        "void main() {\n"            +
+        "  vUv = vec2(aUv.x, aUv.y + uOffset);\n" +
+        "  gl_Position = uMVP * vec4(aPos, 1.0);\n" +
+        "}";
+
+    private static final String ROAD_FRAG_SRC =
+        "precision mediump float;\n" +
+        "uniform sampler2D uTex;\n"  +
+        "varying vec2 vUv;\n"        +
+        "void main() {\n"            +
+        "  gl_FragColor = texture2D(uTex, vUv);\n" +
+        "}";
+
     // ---- GL handles ---------------------------------------------------------
 
     // Placeholder light positions in model space — tune X/Y/Z once kart geometry is confirmed.
@@ -109,6 +130,14 @@ class KartRenderer implements GLSurfaceView.Renderer {
     private int mUni_uBlinkerR, mUni_uBlinkerRPos0, mUni_uBlinkerRPos1;
     private int mWhiteTex;
 
+    // ---- Rainbow road GL handles --------------------------------------------
+
+    private int mRoadProgram;
+    private int mRoadAttr_aPos, mRoadAttr_aUv;
+    private int mRoadUni_uMVP, mRoadUni_uOffset, mRoadUni_uTex;
+    private int mRoadTex;
+    private java.nio.FloatBuffer mRoadVbo;
+
     // ---- Scene data ---------------------------------------------------------
 
     private List<Mesh> mKartMeshes      = Collections.emptyList();
@@ -124,9 +153,11 @@ class KartRenderer implements GLSurfaceView.Renderer {
     volatile boolean mHeadlights   = false;
     volatile boolean mBlinkerL     = false;
     volatile boolean mBlinkerR     = false;
+    volatile boolean mLkasActive   = false;
 
     // Idle showcase spin state (GL-thread only)
     private float mIdleAngle  = 0f;
+    private float mRoadOffset = 0f;
     private long  mPrevTimeMs = 0L;
 
     // ---- Matrices -----------------------------------------------------------
@@ -136,6 +167,7 @@ class KartRenderer implements GLSurfaceView.Renderer {
     private final float[] mModel      = new float[16];
     private final float[] mMVP        = new float[16];
     private final float[] mMV         = new float[16]; // scratch only
+    private final float[] mRoadMVP   = new float[16];
 
     private final PluginContext mCtx;
 
@@ -152,6 +184,7 @@ class KartRenderer implements GLSurfaceView.Renderer {
     void setHeadlights(boolean b)    { mHeadlights   = b;   }
     void setBlinkerL(boolean b)      { mBlinkerL     = b;   }
     void setBlinkerR(boolean b)      { mBlinkerR     = b;   }
+    void setLkasActive(boolean b)    { mLkasActive   = b;   }
 
     // ---- GLSurfaceView.Renderer ---------------------------------------------
 
@@ -190,6 +223,16 @@ class KartRenderer implements GLSurfaceView.Renderer {
                 /* up     */ 0f,   1f,   0f);
 
         loadModels();
+
+        mRoadProgram     = buildProgram(ROAD_VERT_SRC, ROAD_FRAG_SRC);
+        mRoadAttr_aPos   = GLES20.glGetAttribLocation (mRoadProgram, "aPos");
+        mRoadAttr_aUv    = GLES20.glGetAttribLocation (mRoadProgram, "aUv");
+        mRoadUni_uMVP    = GLES20.glGetUniformLocation(mRoadProgram, "uMVP");
+        mRoadUni_uOffset = GLES20.glGetUniformLocation(mRoadProgram, "uOffset");
+        mRoadUni_uTex    = GLES20.glGetUniformLocation(mRoadProgram, "uTex");
+        mRoadTex         = createRainbowTexture();
+        mRoadVbo         = buildRoadMesh();
+
         mPrevTimeMs = 0L;
     }
 
@@ -263,6 +306,33 @@ class KartRenderer implements GLSurfaceView.Renderer {
 
         drawList(mKartMeshes);
         drawList(mCharacterMeshes);
+
+        // ---- Rainbow road (LKAS active) ----
+        mRoadOffset = (mRoadOffset + dt * 0.4f) % 1.0f;
+        if (mLkasActive) {
+            Matrix.multiplyMM(mRoadMVP, 0, mProjection, 0, mView, 0);
+            GLES20.glEnable(GLES20.GL_BLEND);
+            GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA);
+            GLES20.glDepthMask(false);
+            GLES20.glDisable(GLES20.GL_CULL_FACE);
+            GLES20.glUseProgram(mRoadProgram);
+            GLES20.glUniformMatrix4fv(mRoadUni_uMVP, 1, false, mRoadMVP, 0);
+            GLES20.glUniform1f(mRoadUni_uOffset, mRoadOffset);
+            GLES20.glUniform1i(mRoadUni_uTex, 0);
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mRoadTex);
+            int roadStride = 5 * 4;
+            mRoadVbo.position(0);
+            GLES20.glVertexAttribPointer(mRoadAttr_aPos, 3, GLES20.GL_FLOAT, false, roadStride, mRoadVbo);
+            GLES20.glEnableVertexAttribArray(mRoadAttr_aPos);
+            mRoadVbo.position(3);
+            GLES20.glVertexAttribPointer(mRoadAttr_aUv,  2, GLES20.GL_FLOAT, false, roadStride, mRoadVbo);
+            GLES20.glEnableVertexAttribArray(mRoadAttr_aUv);
+            GLES20.glDrawArrays(GLES20.GL_TRIANGLES, 0, 6);
+            GLES20.glDepthMask(true);
+            GLES20.glDisable(GLES20.GL_BLEND);
+            GLES20.glEnable(GLES20.GL_CULL_FACE);
+        }
     }
 
     // ---- Internal -----------------------------------------------------------
@@ -313,6 +383,69 @@ class KartRenderer implements GLSurfaceView.Renderer {
 
             GLES20.glDrawArrays(GLES20.GL_TRIANGLES, 0, m.vertexCount);
         }
+    }
+
+    // ---- Rainbow road helpers -----------------------------------------------
+
+    private static int createRainbowTexture() {
+        int w = 256;
+        int[] pixels = new int[w];
+        for (int x = 0; x < w; x++) {
+            pixels[x] = hsvToArgb(x * 360f / w, 1f, 1f, 0.78f);
+        }
+        android.graphics.Bitmap bmp = android.graphics.Bitmap.createBitmap(
+                pixels, w, 1, android.graphics.Bitmap.Config.ARGB_8888);
+        int[] tex = new int[1];
+        GLES20.glGenTextures(1, tex, 0);
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, tex[0]);
+        android.opengl.GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bmp, 0);
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR);
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR);
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_REPEAT);
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_REPEAT);
+        bmp.recycle();
+        return tex[0];
+    }
+
+    private static int hsvToArgb(float hue, float s, float v, float a) {
+        float h = hue / 60f;
+        int   i = (int) h % 6;
+        float f = h - (int) h;
+        float p = v * (1 - s);
+        float q = v * (1 - s * f);
+        float t = v * (1 - s * (1 - f));
+        float r, g, b;
+        switch (i) {
+            case 0:  r = v; g = t; b = p; break;
+            case 1:  r = q; g = v; b = p; break;
+            case 2:  r = p; g = v; b = t; break;
+            case 3:  r = p; g = q; b = v; break;
+            case 4:  r = t; g = p; b = v; break;
+            default: r = v; g = p; b = q; break;
+        }
+        return ((int)(a*255) << 24) | ((int)(r*255) << 16) | ((int)(g*255) << 8) | (int)(b*255);
+    }
+
+    private static java.nio.FloatBuffer buildRoadMesh() {
+        // Flat quad at y=-0.15, width 1.6 (x), length 6.0 (z: -3..+3).
+        // CCW winding from +Y so the face is visible from the camera above.
+        // UV: u across width (0..1), v along length (0..3, tiles 3×).
+        float[] v = {
+            // triangle 1
+            -0.8f, -0.15f, -3.0f,  0f, 0f,
+             0.8f, -0.15f,  3.0f,  1f, 3f,
+             0.8f, -0.15f, -3.0f,  1f, 0f,
+            // triangle 2
+            -0.8f, -0.15f, -3.0f,  0f, 0f,
+            -0.8f, -0.15f,  3.0f,  0f, 3f,
+             0.8f, -0.15f,  3.0f,  1f, 3f,
+        };
+        java.nio.ByteBuffer bb = java.nio.ByteBuffer.allocateDirect(v.length * 4);
+        bb.order(java.nio.ByteOrder.nativeOrder());
+        java.nio.FloatBuffer fb = bb.asFloatBuffer();
+        fb.put(v);
+        fb.position(0);
+        return fb;
     }
 
     // ---- Shader helpers -----------------------------------------------------

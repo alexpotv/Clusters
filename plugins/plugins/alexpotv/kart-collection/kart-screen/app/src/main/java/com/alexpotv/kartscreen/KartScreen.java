@@ -53,6 +53,7 @@ public final class KartScreen implements ClusterPlugin {
         mRenderer.setHeadlights(s.lights.headlightsOn);
         mRenderer.setBlinkerL(s.lights.leftBlinker);
         mRenderer.setBlinkerR(s.lights.rightBlinker);
+        mRenderer.setLkasActive(s.adas.lkasActive);
     }
 
     @Override
