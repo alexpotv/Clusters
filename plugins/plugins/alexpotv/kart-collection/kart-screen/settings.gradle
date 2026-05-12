@@ -20,6 +20,6 @@ dependencyResolutionManagement {
 rootProject.name = "kart-screen"
 
 include ':cluster-plugin-api'
-project(':cluster-plugin-api').projectDir = file('../../../../cluster-plugin-api')
+project(':cluster-plugin-api').projectDir = file('../../../../../cluster-plugin-api')
 
 include ':app'

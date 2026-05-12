@@ -23,9 +23,6 @@ import android.widget.Toast;
 import com.example.clusterapi.PluginContext;
 import com.example.clusterapp.plugin.PluginInfo;
 import com.example.clusterapp.plugin.PluginRegistry;
-import com.example.clusterapp.screens.CustomScreen;
-import com.example.clusterapp.screens.DbcScreen;
-import com.example.clusterapp.screens.DiscoveryScreen;
 
 import java.util.List;
 import java.util.Map;
@@ -54,15 +51,12 @@ public class MainActivity extends Activity {
     private static final int TAB_BUILTIN     = 0;
     private static final int TAB_PLUGINS     = 1;
     private static final int TAB_MARKETPLACE = 2;
-    private static final int TAB_DEBUG       = 3;
-    private static final int TAB_DBC         = 4;
-    private static final int TAB_CUSTOM      = 5;
-    private static final int TAB_SETTINGS    = 6;
+    private static final int TAB_SETTINGS    = 3;
 
     private int mSelectedMode = 1;
     private int mCurrentTab   = TAB_BUILTIN;
 
-    private final Button[] mTabButtons = new Button[7];
+    private final Button[] mTabButtons = new Button[4];
 
     private FrameLayout mContentFrame;
     private FrameLayout mSettingsOverlay;
@@ -117,7 +111,7 @@ public class MainActivity extends Activity {
         tabBar.setOrientation(LinearLayout.HORIZONTAL);
         tabBar.setBackgroundColor(0xFF1A1A1A);
 
-        String[] tabLabels = {"Built-in", "Plugins", "Marketplace", "Debug", "DBC", "Custom", "Settings"};
+        String[] tabLabels = {"Built-in", "Plugins", "Marketplace", "Settings"};
         for (int i = 0; i < tabLabels.length; i++) {
             final int tab = i;
             Button btn = new Button(this);
@@ -215,12 +209,6 @@ public class MainActivity extends Activity {
             mContentFrame.addView(buildBuiltInTab());
         } else if (tab == TAB_PLUGINS) {
             mContentFrame.addView(buildPluginsTab());
-        } else if (tab == TAB_DEBUG) {
-            mContentFrame.addView(new DiscoveryScreen().onCreateView(hostPluginContext()));
-        } else if (tab == TAB_DBC) {
-            mContentFrame.addView(new DbcScreen().onCreateView(hostPluginContext()));
-        } else if (tab == TAB_CUSTOM) {
-            mContentFrame.addView(new CustomScreen().onCreateView(hostPluginContext()));
         } else if (tab == TAB_SETTINGS) {
             mContentFrame.addView(buildSettingsTab());
         }
@@ -618,10 +606,6 @@ public class MainActivity extends Activity {
         mStatusText.setText(
             "overlay: " + ClusterDisplayService.sStatus
             + "   mux: " + ClusterDisplayService.sMuxStatus);
-    }
-
-    private PluginContext hostPluginContext() {
-        return new PluginContext(this, getApplicationInfo().sourceDir, "host", 0, 0);
     }
 
     private int dp(int dp) {

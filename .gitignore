@@ -26,3 +26,8 @@ reference-docs/jadx-export/*
 reference-docs
 
 graphify-out
+
+gradlew
+gradlew.bat
+gradle-wrapper.jar
+gradle-wrapper.properties
