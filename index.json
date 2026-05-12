@@ -1,0 +1,13 @@
+[
+  {
+    "id": "com.alexpotv.kartscreen",
+    "name": "Kart Screen",
+    "version": "1.0.0",
+    "author": "alexpotv",
+    "collection": "kart-collection",
+    "apkUrl": "https://alexpotv.github.io/Clusters/apks/com.alexpotv.kartscreen.apk",
+    "sha256": "ff856abc3c8599572d206614f38c281715da8854953c9eec139136e2fa902840",
+    "authorReadmeUrl": "https://alexpotv.github.io/Clusters/readmes/alexpotv/README.md",
+    "screenReadmeUrl": "https://alexpotv.github.io/Clusters/readmes/alexpotv/kart-collection/kart-screen/README.md"
+  }
+]
