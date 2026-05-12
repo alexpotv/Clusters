@@ -24,6 +24,8 @@ import com.example.clusterapi.PluginContext;
 import com.example.clusterapp.plugin.PluginInfo;
 import com.example.clusterapp.plugin.PluginRegistry;
 
+import java.io.File;
+
 import java.util.List;
 import java.util.Map;
 
@@ -52,11 +54,12 @@ public class MainActivity extends Activity {
     private static final int TAB_PLUGINS     = 1;
     private static final int TAB_MARKETPLACE = 2;
     private static final int TAB_SETTINGS    = 3;
+    private static final int TAB_DEVELOPER   = 4;
 
     private int mSelectedMode = 1;
     private int mCurrentTab   = TAB_BUILTIN;
 
-    private final Button[] mTabButtons = new Button[4];
+    private final Button[] mTabButtons = new Button[5];
 
     private FrameLayout mContentFrame;
     private FrameLayout mSettingsOverlay;
@@ -111,7 +114,7 @@ public class MainActivity extends Activity {
         tabBar.setOrientation(LinearLayout.HORIZONTAL);
         tabBar.setBackgroundColor(0xFF1A1A1A);
 
-        String[] tabLabels = {"Built-in", "Plugins", "Marketplace", "Settings"};
+        String[] tabLabels = {"Built-in", "Plugins", "Marketplace", "Settings", "Developer"};
         for (int i = 0; i < tabLabels.length; i++) {
             final int tab = i;
             Button btn = new Button(this);
@@ -127,6 +130,9 @@ public class MainActivity extends Activity {
             mTabButtons[i] = btn;
             tabBar.addView(btn);
         }
+        boolean devMode = AppSettings.getInstance(this).isDeveloperModeEnabled();
+        mTabButtons[TAB_DEVELOPER].setVisibility(devMode ? View.VISIBLE : View.GONE);
+
         root.addView(tabBar, new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
@@ -211,6 +217,8 @@ public class MainActivity extends Activity {
             mContentFrame.addView(buildPluginsTab());
         } else if (tab == TAB_SETTINGS) {
             mContentFrame.addView(buildSettingsTab());
+        } else if (tab == TAB_DEVELOPER) {
+            mContentFrame.addView(buildDeveloperTab());
         }
     }
 
@@ -393,6 +401,159 @@ public class MainActivity extends Activity {
     }
 
     // -------------------------------------------------------------------------
+    // Tab: Developer
+    // -------------------------------------------------------------------------
+
+    private View buildDeveloperTab() {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding(dp(24), dp(20), dp(24), dp(20));
+
+        // ── Currently loaded ──────────────────────────────────────────────────
+        TextView loadedHeader = new TextView(this);
+        loadedHeader.setText("CURRENTLY LOADED");
+        loadedHeader.setTextColor(0xFF666666);
+        loadedHeader.setTextSize(10);
+        loadedHeader.setTypeface(null, Typeface.BOLD);
+        loadedHeader.setPadding(0, 0, 0, dp(8));
+        col.addView(loadedHeader);
+
+        PluginInfo dev = ClusterDisplayService.sDevPluginInfo;
+        if (dev != null) {
+            LinearLayout card = new LinearLayout(this);
+            card.setOrientation(LinearLayout.HORIZONTAL);
+            card.setBackgroundColor(0xFF1E2E1E);
+            card.setPadding(dp(14), dp(12), dp(14), dp(12));
+            card.setGravity(Gravity.CENTER_VERTICAL);
+
+            LinearLayout textCol = new LinearLayout(this);
+            textCol.setOrientation(LinearLayout.VERTICAL);
+
+            TextView nameView = new TextView(this);
+            nameView.setText("● " + dev.name);
+            nameView.setTextColor(0xFF4CAF50);
+            nameView.setTextSize(14);
+            nameView.setTypeface(null, Typeface.BOLD);
+            textCol.addView(nameView);
+
+            TextView metaView = new TextView(this);
+            metaView.setText(dev.id + "  •  v" + dev.version);
+            metaView.setTextColor(0xFF777777);
+            metaView.setTextSize(11);
+            textCol.addView(metaView);
+
+            card.addView(textCol, new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+            Button clearBtn = new Button(this);
+            clearBtn.setText("Clear");
+            clearBtn.setTextSize(12);
+            clearBtn.setAllCaps(false);
+            clearBtn.setBackgroundColor(0xFF7F0000);
+            clearBtn.setTextColor(0xFFCCCCCC);
+            clearBtn.setPadding(dp(8), 0, dp(8), 0);
+            LinearLayout.LayoutParams clearLp = new LinearLayout.LayoutParams(dp(72), dp(34));
+            clearLp.gravity = Gravity.CENTER_VERTICAL;
+            card.addView(clearBtn, clearLp);
+            clearBtn.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) {
+                    ClusterDisplayService.clearDevPlugin();
+                    renderTab(TAB_DEVELOPER);
+                    refreshStatus();
+                }
+            });
+
+            LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            cardLp.setMargins(0, 0, 0, dp(16));
+            col.addView(card, cardLp);
+        } else {
+            TextView none = new TextView(this);
+            none.setText("No dev plugin loaded.");
+            none.setTextColor(0xFF555555);
+            none.setTextSize(12);
+            LinearLayout.LayoutParams noneLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            noneLp.setMargins(0, 0, 0, dp(16));
+            col.addView(none, noneLp);
+        }
+
+        // ── Load APK ──────────────────────────────────────────────────────────
+        TextView loadHeader = new TextView(this);
+        loadHeader.setText("LOAD APK");
+        loadHeader.setTextColor(0xFF666666);
+        loadHeader.setTextSize(10);
+        loadHeader.setTypeface(null, Typeface.BOLD);
+        loadHeader.setPadding(0, 0, 0, dp(8));
+        col.addView(loadHeader);
+
+        final EditText pathInput = new EditText(this);
+        pathInput.setHint("/sdcard/app-debug.apk");
+        pathInput.setText("/sdcard/app-debug.apk");
+        pathInput.setTextColor(0xFFFFFFFF);
+        pathInput.setHintTextColor(0xFF444444);
+        pathInput.setBackgroundColor(0xFF2A2A2A);
+        pathInput.setPadding(dp(10), dp(8), dp(10), dp(8));
+        pathInput.setTextSize(12);
+        pathInput.setSingleLine(true);
+        LinearLayout.LayoutParams inputLp = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        inputLp.setMargins(0, 0, 0, dp(8));
+        col.addView(pathInput, inputLp);
+
+        final TextView errorText = new TextView(this);
+        errorText.setTextColor(0xFFFF5555);
+        errorText.setTextSize(11);
+        errorText.setVisibility(View.GONE);
+        col.addView(errorText, new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        Button loadBtn = new Button(this);
+        loadBtn.setText("Load APK");
+        loadBtn.setTextSize(13);
+        loadBtn.setAllCaps(false);
+        loadBtn.setBackgroundColor(0xFF1565C0);
+        loadBtn.setTextColor(0xFFFFFFFF);
+        loadBtn.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                String path = pathInput.getText().toString().trim();
+                if (path.isEmpty()) {
+                    errorText.setText("Enter an APK path.");
+                    errorText.setVisibility(View.VISIBLE);
+                    return;
+                }
+                java.io.File apkFile = new java.io.File(path);
+                if (!apkFile.isFile()) {
+                    errorText.setText("File not found: " + path);
+                    errorText.setVisibility(View.VISIBLE);
+                    return;
+                }
+                PluginInfo info;
+                try {
+                    info = PluginInfo.readFromApk(apkFile);
+                } catch (Exception e) {
+                    errorText.setText("Could not read plugin.json: " + e.getMessage());
+                    errorText.setVisibility(View.VISIBLE);
+                    return;
+                }
+                errorText.setVisibility(View.GONE);
+                ClusterDisplayService.setDevPlugin(info, apkFile);
+                startService(new Intent(MainActivity.this, ClusterDisplayService.class));
+                renderTab(TAB_DEVELOPER);
+                refreshStatus();
+            }
+        });
+        LinearLayout.LayoutParams loadBtnLp = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(44));
+        loadBtnLp.setMargins(0, dp(4), 0, 0);
+        col.addView(loadBtn, loadBtnLp);
+
+        scroll.addView(col);
+        return scroll;
+    }
+
+    // -------------------------------------------------------------------------
     // Tab: Settings
     // -------------------------------------------------------------------------
 
@@ -500,6 +661,59 @@ public class MainActivity extends Activity {
         camIdHint.setTextColor(0xFF555555);
         camIdHint.setTextSize(10);
         col.addView(camIdHint);
+
+        // ── Section: Developer ────────────────────────────────────────────────
+        TextView devHeader = new TextView(this);
+        devHeader.setText("DEVELOPER");
+        devHeader.setTextColor(0xFF666666);
+        devHeader.setTextSize(10);
+        devHeader.setTypeface(null, Typeface.BOLD);
+        LinearLayout.LayoutParams devHeaderLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        devHeaderLp.setMargins(0, dp(24), 0, dp(8));
+        col.addView(devHeader, devHeaderLp);
+
+        LinearLayout devRow = new LinearLayout(this);
+        devRow.setOrientation(LinearLayout.HORIZONTAL);
+        devRow.setGravity(Gravity.CENTER_VERTICAL);
+        devRow.setBackgroundColor(0xFF1E1E1E);
+        devRow.setPadding(dp(16), dp(14), dp(16), dp(14));
+
+        LinearLayout devText = new LinearLayout(this);
+        devText.setOrientation(LinearLayout.VERTICAL);
+
+        TextView devTitle = new TextView(this);
+        devTitle.setText("Developer Mode");
+        devTitle.setTextColor(0xFFEEEEEE);
+        devTitle.setTextSize(14);
+        devText.addView(devTitle);
+
+        TextView devDesc = new TextView(this);
+        devDesc.setText("Shows a Developer tab for sideloading plugin APKs.");
+        devDesc.setTextColor(0xFF777777);
+        devDesc.setTextSize(10);
+        devText.addView(devDesc);
+
+        devRow.addView(devText, new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        Switch devSwitch = new Switch(this);
+        devSwitch.setChecked(settings.isDeveloperModeEnabled());
+        devSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override public void onCheckedChanged(CompoundButton btn, boolean checked) {
+                settings.setDeveloperModeEnabled(checked);
+                mTabButtons[TAB_DEVELOPER].setVisibility(checked ? View.VISIBLE : View.GONE);
+                if (!checked && mCurrentTab == TAB_DEVELOPER) {
+                    selectTab(TAB_BUILTIN);
+                }
+            }
+        });
+        devRow.addView(devSwitch, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        col.addView(devRow, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
         scroll.addView(col);
         return scroll;

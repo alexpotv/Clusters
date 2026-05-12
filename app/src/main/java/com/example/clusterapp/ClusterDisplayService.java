@@ -53,6 +53,9 @@ public class ClusterDisplayService extends Service {
     /** ID of the plugin currently shown on the cluster, or null if a built-in is active. */
     static volatile String sCurrentPluginId = null;
 
+    /** Metadata of the dev-sideloaded plugin, or null if none is loaded. Not persisted. */
+    static volatile PluginInfo sDevPluginInfo = null;
+
     /** APK path of the currently-active screen (host APK for built-ins, plugin APK for plugins). */
     static volatile String sActiveApkPath = null;
     /** Settings namespace for the currently-active screen (plugin ID, or "builtin.N" for built-ins). */
@@ -279,6 +282,27 @@ public class ClusterDisplayService extends Service {
         return sInstance != null ? sInstance.mActiveScreen : null;
     }
 
+    /**
+     * Load a plugin APK directly without persisting it to the registry.
+     * On next service start the last persisted screen is restored automatically.
+     */
+    static void setDevPlugin(PluginInfo info, File apkFile) {
+        if (sInstance != null) sInstance.applyDevPlugin(info, apkFile);
+    }
+
+    /** Restore the last persisted screen and clear the dev plugin state. */
+    static void clearDevPlugin() {
+        if (sInstance == null) return;
+        sDevPluginInfo = null;
+        PluginRegistry registry = PluginRegistry.getInstance(sInstance);
+        String savedId = registry.getActivePluginId();
+        if (savedId != null && registry.isInstalled(savedId)) {
+            sInstance.applyPlugin(savedId);
+        } else {
+            sInstance.applyMode(registry.getActiveMode());
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Screen management — internal
     // -------------------------------------------------------------------------
@@ -324,6 +348,23 @@ public class ClusterDisplayService extends Service {
         } else {
             applyMode(mPreLaneWatchMode);
         }
+    }
+
+    private void applyDevPlugin(PluginInfo info, File apkFile) {
+        mLaneWatchActive = false;
+        ClusterPlugin plugin;
+        try {
+            plugin = mPluginLoader.load(info, apkFile);
+        } catch (PluginLoadException e) {
+            sStatus = "Dev load failed: " + e.getMessage();
+            return;
+        }
+        sDevPluginInfo   = info;
+        sCurrentPluginId = null;
+        sActiveApkPath   = apkFile.getAbsolutePath();
+        sActiveNamespace = info.id;
+        // Intentionally NOT calling registry.setActivePluginId() — no persistence.
+        swapScreen(plugin, sActiveApkPath, sActiveNamespace);
     }
 
     private void applyMode(int mode) {

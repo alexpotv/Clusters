@@ -18,6 +18,7 @@ public class AppSettings {
     private static final String KEY_LANE_WATCH_CAMERA_ID = "lane_watch_camera_id";
     private static final String KEY_CUSTOM_REPOS         = "custom_repos";
     private static final String KEY_ACTIVE_REPO_URL      = "active_repo_url";
+    private static final String KEY_DEVELOPER_MODE       = "developer_mode";
 
     private static AppSettings sInstance;
 
@@ -100,5 +101,17 @@ public class AppSettings {
 
     public void setActiveRepoUrl(String url) {
         mPrefs.edit().putString(KEY_ACTIVE_REPO_URL, url == null ? "" : url).apply();
+    }
+
+    // -------------------------------------------------------------------------
+    // Developer mode
+    // -------------------------------------------------------------------------
+
+    public boolean isDeveloperModeEnabled() {
+        return mPrefs.getBoolean(KEY_DEVELOPER_MODE, false);
+    }
+
+    public void setDeveloperModeEnabled(boolean enabled) {
+        mPrefs.edit().putBoolean(KEY_DEVELOPER_MODE, enabled).apply();
     }
 }
