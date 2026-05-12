@@ -1,6 +1,6 @@
 # Blender 3.6.1
 # www.blender.org
-mtllib mario.mtl
+mtllib character.mtl
 o polygon0
 v 0.253185 0.959634 -0.012202
 v 0.000000 0.873816 -0.191957
