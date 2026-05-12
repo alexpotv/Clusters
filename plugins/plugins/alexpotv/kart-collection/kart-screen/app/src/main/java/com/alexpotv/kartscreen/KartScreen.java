@@ -10,12 +10,10 @@ import com.example.clusterapi.VehicleSnapshot;
  * Cluster screen that renders a 3D go-kart + driver model and animates it with
  * live vehicle data:
  *
- *   Steering angle  → yaw the kart assembly left/right
- *   Speed           → slight nose-down pitch (aerodynamic press)
- *   Brakes pressed  → red ambient tint simulating brake-light back-scatter
- *
- * When parked and steering is centred the model slowly auto-rotates as a
- * showcase.
+ *   Shift position 1 (R) or 2 (N) → auto-rotating showcase spin
+ *   All other shift positions       → yaw driven by steering angle (±30° max)
+ *   Speed                           → slight nose-down pitch (aerodynamic press)
+ *   Brakes pressed                  → red ambient tint simulating brake-light back-scatter
  *
  * Required assets in the plugin APK's assets/ folder:
  *   kart.obj / kart.mtl        — kart body, exported from Blender with Y-up
@@ -51,6 +49,10 @@ public final class KartScreen implements ClusterPlugin {
         mRenderer.setSteeringDeg(steer);
         mRenderer.setSpeedKmh(Math.max(0, s.motion.speedKmh));
         mRenderer.setBraking(s.brakes.pedalPressed || s.brakes.fcanBrakePressed);
+        mRenderer.setShiftPosition(s.drivetrain.shiftPosition);
+        mRenderer.setHeadlights(s.lights.headlightsOn);
+        mRenderer.setBlinkerL(s.lights.leftBlinker);
+        mRenderer.setBlinkerR(s.lights.rightBlinker);
     }
 
     @Override
