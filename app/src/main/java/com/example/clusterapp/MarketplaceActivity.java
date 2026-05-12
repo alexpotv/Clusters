@@ -4,12 +4,14 @@ import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Typeface;
 import android.os.Bundle;
+import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -19,6 +21,7 @@ import android.widget.Toast;
 import com.example.clusterapp.plugin.PluginInfo;
 import com.example.clusterapp.plugin.PluginRegistry;
 import com.example.clusterapp.plugin.PluginRepository;
+import com.example.clusterapp.plugin.RepoInfo;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -38,6 +41,7 @@ public class MarketplaceActivity extends Activity {
     private static final int SCREEN_COLLECTION = 1;
     private static final int SCREEN_PLUGINS    = 2;
     private static final int SCREEN_INSTALLED  = 3;
+    private static final int SCREEN_REPOS      = 4;
 
     private PluginRegistry   mRegistry;
     private PluginRepository mRepository;
@@ -53,6 +57,7 @@ public class MarketplaceActivity extends Activity {
     private FrameLayout mContentFrame;
     private TextView    mBreadcrumb;
     private Button      mBackBtn;
+    private Button      mRepoBtn;
     private TextView    mStatusText;
 
     @Override
@@ -116,6 +121,14 @@ public class MarketplaceActivity extends Activity {
         });
         rightBtns.addView(homeBtn, new LinearLayout.LayoutParams(dp(68), dp(40)));
 
+        mRepoBtn = makeTextButton(activeRepoDisplayName(), 0xFF888888);
+        mRepoBtn.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { navigateTo(SCREEN_REPOS); }
+        });
+        LinearLayout.LayoutParams repoBtnLp = new LinearLayout.LayoutParams(dp(72), dp(40));
+        repoBtnLp.setMargins(dp(4), 0, 0, 0);
+        rightBtns.addView(mRepoBtn, repoBtnLp);
+
         Button installedBtn = makeTextButton("Installed", 0xFF4CAF50);
         installedBtn.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { navigateTo(SCREEN_INSTALLED); }
@@ -173,6 +186,10 @@ public class MarketplaceActivity extends Activity {
             case SCREEN_INSTALLED:
                 mBreadcrumb.setText("INSTALLED SCREENS");
                 mContentFrame.addView(buildInstalledScreen());
+                break;
+            case SCREEN_REPOS:
+                mBreadcrumb.setText("REPOSITORIES");
+                mContentFrame.addView(buildReposScreen());
                 break;
         }
     }
@@ -671,12 +688,187 @@ public class MarketplaceActivity extends Activity {
     }
 
     // -------------------------------------------------------------------------
+    // Screen: Repos — picker + manager
+    // -------------------------------------------------------------------------
+
+    private View buildReposScreen() {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        list.setPadding(dp(12), dp(12), dp(12), dp(12));
+
+        // Official repo (always present, non-removable)
+        TextView offLabel = sectionLabel("OFFICIAL REPOSITORY");
+        list.addView(offLabel);
+
+        list.addView(buildRepoCard(
+            "Clusters Official", PluginRepository.INDEX_URL,
+            PluginRepository.INDEX_URL.equals(activeRepoEffectiveUrl()),
+            null /* not removable */,
+            null /* no container to rebuild */));
+        list.addView(divider());
+
+        // Custom repos
+        TextView customLabel = sectionLabel("CUSTOM REPOSITORIES");
+        LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        clp.setMargins(0, dp(16), 0, dp(4));
+        customLabel.setLayoutParams(clp);
+        list.addView(customLabel);
+
+        final LinearLayout customList = new LinearLayout(this);
+        customList.setOrientation(LinearLayout.VERTICAL);
+        list.addView(customList);
+        rebuildCustomRepoList(customList);
+
+        // Add repo form
+        TextView addLabel = sectionLabel("ADD REPOSITORY");
+        LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        alp.setMargins(0, dp(20), 0, dp(6));
+        addLabel.setLayoutParams(alp);
+        list.addView(addLabel);
+
+        final EditText nameInput = makeEditText("Name  (e.g. My Community Repo)");
+        list.addView(nameInput, inputLp(dp(6)));
+
+        final EditText urlInput = makeEditText("URL  (https://…/index.json)");
+        urlInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        list.addView(urlInput, inputLp(dp(4)));
+
+        Button addBtn = makeButton("Add Repository", 0xFF1565C0, 0xFFFFFFFF);
+        addBtn.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                String name = nameInput.getText().toString().trim();
+                String url  = urlInput.getText().toString().trim();
+                if (url.isEmpty()) {
+                    Toast.makeText(MarketplaceActivity.this, "URL is required.", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                if (name.isEmpty()) name = url;
+                AppSettings.getInstance(MarketplaceActivity.this).addCustomRepo(new RepoInfo(name, url));
+                nameInput.setText("");
+                urlInput.setText("");
+                rebuildCustomRepoList(customList);
+            }
+        });
+        LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(42));
+        list.addView(addBtn, btnLp);
+
+        scroll.addView(list);
+        return scroll;
+    }
+
+    private void rebuildCustomRepoList(final LinearLayout container) {
+        container.removeAllViews();
+        List<RepoInfo> repos = AppSettings.getInstance(this).getCustomRepos();
+        if (repos.isEmpty()) {
+            container.addView(emptyLabel("No custom repositories added yet."));
+            return;
+        }
+        for (final RepoInfo repo : repos) {
+            container.addView(buildRepoCard(repo.name, repo.url,
+                repo.url.equals(activeRepoEffectiveUrl()),
+                repo.url,
+                container));
+            container.addView(divider());
+        }
+    }
+
+    private LinearLayout buildRepoCard(
+            final String name, final String url,
+            boolean isActive,
+            final String removableUrl,
+            final LinearLayout reloadContainer) {
+
+        LinearLayout card = makeCard();
+
+        LinearLayout textCol = new LinearLayout(this);
+        textCol.setOrientation(LinearLayout.VERTICAL);
+
+        TextView nameView = new TextView(this);
+        nameView.setText((isActive ? "● " : "") + name);
+        nameView.setTextColor(isActive ? 0xFF4CAF50 : 0xFFFFFFFF);
+        nameView.setTextSize(14);
+        nameView.setTypeface(null, Typeface.BOLD);
+        textCol.addView(nameView);
+
+        TextView urlView = new TextView(this);
+        urlView.setText(url);
+        urlView.setTextColor(0xFF666666);
+        urlView.setTextSize(10);
+        textCol.addView(urlView);
+
+        card.addView(textCol, new LinearLayout.LayoutParams(
+            0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        if (!isActive) {
+            Button browseBtn = makeButton("Browse", 0xFF1565C0, 0xFFFFFFFF);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(72), dp(32));
+            lp.gravity = Gravity.CENTER_VERTICAL;
+            lp.setMargins(0, 0, removableUrl != null ? dp(6) : 0, 0);
+            card.addView(browseBtn, lp);
+            browseBtn.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) { switchToRepo(url, name); }
+            });
+        }
+
+        if (removableUrl != null) {
+            Button removeBtn = makeButton("Remove", 0xFF7F0000, 0xFFCCCCCC);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(72), dp(32));
+            lp.gravity = Gravity.CENTER_VERTICAL;
+            card.addView(removeBtn, lp);
+            removeBtn.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) {
+                    AppSettings settings = AppSettings.getInstance(MarketplaceActivity.this);
+                    settings.removeCustomRepo(removableUrl);
+                    // If the removed repo was active, fall back to official
+                    if (removableUrl.equals(settings.getActiveRepoUrl())) {
+                        switchToRepo("", "Official");
+                    }
+                    if (reloadContainer != null) rebuildCustomRepoList(reloadContainer);
+                }
+            });
+        }
+
+        return card;
+    }
+
+    private void switchToRepo(String url, String displayName) {
+        AppSettings.getInstance(this).setActiveRepoUrl(url);
+        mRepoBtn.setText(activeRepoDisplayName());
+        // Reset to authors screen and reload
+        mBackStack.clear();
+        mRemoteIndex = null;
+        mRemoteFlat.clear();
+        navigateTo(SCREEN_AUTHORS);
+        fetchRemoteIndex();
+    }
+
+    private String activeRepoEffectiveUrl() {
+        String url = AppSettings.getInstance(this).getActiveRepoUrl();
+        return url.isEmpty() ? PluginRepository.INDEX_URL : url;
+    }
+
+    private String activeRepoDisplayName() {
+        String url = AppSettings.getInstance(this).getActiveRepoUrl();
+        if (url.isEmpty()) return "Official";
+        for (RepoInfo repo : AppSettings.getInstance(this).getCustomRepos()) {
+            if (repo.url.equals(url)) return repo.name;
+        }
+        return "Custom";
+    }
+
+    // -------------------------------------------------------------------------
     // Remote index
     // -------------------------------------------------------------------------
 
     private void fetchRemoteIndex() {
+        String activeUrl = AppSettings.getInstance(this).getActiveRepoUrl();
+        String url = activeUrl.isEmpty() ? PluginRepository.INDEX_URL : activeUrl;
         mStatusText.setText("Fetching available screens…");
-        mRepository.fetchIndex(new PluginRepository.Callback<List<PluginInfo>>() {
+        mRepository.fetchIndex(url, new PluginRepository.Callback<List<PluginInfo>>() {
             @Override public void onSuccess(List<PluginInfo> plugins) {
                 mStatusText.setText("");
                 mRemoteFlat  = plugins;
@@ -773,6 +965,34 @@ public class MarketplaceActivity extends Activity {
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT));
         wrapper.addView(emptyLabel(msg));
         return wrapper;
+    }
+
+    private TextView sectionLabel(String text) {
+        TextView tv = new TextView(this);
+        tv.setText(text);
+        tv.setTextColor(0xFF888888);
+        tv.setTextSize(11);
+        tv.setPadding(0, 0, 0, dp(4));
+        return tv;
+    }
+
+    private EditText makeEditText(String hint) {
+        EditText et = new EditText(this);
+        et.setHint(hint);
+        et.setTextColor(0xFFFFFFFF);
+        et.setHintTextColor(0xFF555555);
+        et.setBackgroundColor(0xFF2A2A2A);
+        et.setPadding(dp(10), dp(8), dp(10), dp(8));
+        et.setTextSize(13);
+        et.setSingleLine(true);
+        return et;
+    }
+
+    private LinearLayout.LayoutParams inputLp(int bottomMargin) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(0, 0, 0, bottomMargin);
+        return lp;
     }
 
     private LinearLayout makeCard() {

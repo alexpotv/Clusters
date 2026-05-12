@@ -17,3 +17,5 @@ When started, the app send to the cluster the signal that it's now rendering a d
 ## Current State of the Repo
 
 Right now, there are still many artifacts of the repo's creation. The app has debug screens all over, there is not enough interfaces for features specific to some car models, the main app's structure is too heavy, and many of the exposed vehicle attributes don't yet work. This will change as I get more time to clean up and work on the repository, but in the meantime, it's being shared this way for others to explore too. Please see `CONTRIBUTING.md`.
+
+**Please note that the exposed APIs are not stable yet, and are subject to change. This is one of the main reasons why contributions are restricted for now.**

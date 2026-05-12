@@ -50,10 +50,14 @@ public final class PluginRepository {
     // -------------------------------------------------------------------------
 
     public void fetchIndex(final Callback<List<PluginInfo>> callback) {
+        fetchIndex(INDEX_URL, callback);
+    }
+
+    public void fetchIndex(final String url, final Callback<List<PluginInfo>> callback) {
         new Thread(new Runnable() {
             @Override public void run() {
                 try {
-                    final List<PluginInfo> result = fetchIndexSync();
+                    final List<PluginInfo> result = fetchIndexSync(url);
                     mMain.post(new Runnable() {
                         @Override public void run() { callback.onSuccess(result); }
                     });
@@ -187,8 +191,8 @@ public final class PluginRepository {
     // Helpers
     // -------------------------------------------------------------------------
 
-    private List<PluginInfo> fetchIndexSync() throws IOException, JSONException {
-        String body = httpGet(INDEX_URL);
+    private List<PluginInfo> fetchIndexSync(String url) throws IOException, JSONException {
+        String body = httpGet(url);
         JSONArray arr = new JSONArray(body);
         List<PluginInfo> list = new ArrayList<>();
         for (int i = 0; i < arr.length(); i++) {

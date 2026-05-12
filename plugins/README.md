@@ -24,3 +24,11 @@ See [`docs/marketplace/`](../reference-docs/marketplace/README.md) for:
 ## CI / publishing
 
 GitHub Actions will be configured to build each plugin on PR and, after merge, produce a signed release APK, compute its SHA-256, and update `index.json` automatically. This is not yet implemented.
+
+## Building and Running Plugins locally
+
+In the plugin screen directory:
+- Run `gradle wrapper`
+- Run `./gradlew :app:assembleDebug`
+
+Then, drop the APK on the head unit (via `adb push`, ideally to `/sdcard/app-debug.apk`)
