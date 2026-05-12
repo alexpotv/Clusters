@@ -97,7 +97,7 @@ class KartRenderer implements GLSurfaceView.Renderer {
         "uniform float uOffset;\n"   +
         "varying vec2 vUv;\n"        +
         "void main() {\n"            +
-        "  vUv = vec2(aUv.x, aUv.y + uOffset);\n" +
+        "  vUv = vec2(aUv.x, aUv.y - uOffset);\n" +
         "  gl_Position = uMVP * vec4(aPos, 1.0);\n" +
         "}";
 
@@ -106,7 +106,7 @@ class KartRenderer implements GLSurfaceView.Renderer {
         "uniform sampler2D uTex;\n"  +
         "varying vec2 vUv;\n"        +
         "void main() {\n"            +
-        "  gl_FragColor = texture2D(uTex, vUv);\n" +
+        "  gl_FragColor = texture2D(uTex, vec2(vUv.y, 0.5));\n" +
         "}";
 
     // ---- GL handles ---------------------------------------------------------
@@ -308,7 +308,7 @@ class KartRenderer implements GLSurfaceView.Renderer {
         drawList(mCharacterMeshes);
 
         // ---- Rainbow road (LKAS active) ----
-        mRoadOffset = (mRoadOffset + dt * 0.4f) % 1.0f;
+        mRoadOffset = (mRoadOffset + dt * 0.15f) % 1.0f;
         if (mLkasActive) {
             Matrix.setIdentityM(mModel, 0);
             Matrix.rotateM(mModel, 0, 30f, 0f, 1f, 0f);
@@ -435,13 +435,13 @@ class KartRenderer implements GLSurfaceView.Renderer {
         // UV: u across width (0..1), v along length (0..3, tiles 3×).
         float[] v = {
             // triangle 1
-            -0.8f, -0.15f, -3.0f,  0f, 0f,
-             0.8f, -0.15f,  3.0f,  1f, 3f,
-             0.8f, -0.15f, -3.0f,  1f, 0f,
+            -1.5f, -0.15f, -3.0f,  0f, 0f,
+             1.5f, -0.15f,  3.0f,  1f, 3f,
+             1.5f, -0.15f, -3.0f,  1f, 0f,
             // triangle 2
-            -0.8f, -0.15f, -3.0f,  0f, 0f,
-            -0.8f, -0.15f,  3.0f,  0f, 3f,
-             0.8f, -0.15f,  3.0f,  1f, 3f,
+            -1.5f, -0.15f, -3.0f,  0f, 0f,
+            -1.5f, -0.15f,  3.0f,  0f, 3f,
+             1.5f, -0.15f,  3.0f,  1f, 3f,
         };
         java.nio.ByteBuffer bb = java.nio.ByteBuffer.allocateDirect(v.length * 4);
         bb.order(java.nio.ByteOrder.nativeOrder());
