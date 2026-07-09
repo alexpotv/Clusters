@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!--
-  The host app does not install this APK — it loads classes and assets from it
-  directly. The manifest is required by the build system but is otherwise ignored
-  by the host. Do not declare activities, services, or permissions here.
--->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" />

@@ -1,9 +1,0 @@
-{
-  "id":          "com.alexpotv.kartscreen",
-  "name":        "Kart Screen",
-  "description": "Go-kart and driver 3D model reacting to steering, speed, and braking.",
-  "author":      "alexpotv",
-  "version":     "1.0.0",
-  "apiVersion":  1,
-  "entryClass":  "com.alexpotv.kartscreen.KartScreen"
-}

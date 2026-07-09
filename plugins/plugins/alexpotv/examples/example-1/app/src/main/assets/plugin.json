@@ -1,9 +1,0 @@
-{
-  "id": "com.alexpotv.examples.example-1",
-  "name": "Example 1",
-  "description": "A minimal example plugin for the marketplace !!",
-  "author": "alexpotv",
-  "version": "1.0.0",
-  "apiVersion": 1,
-  "entryClass": "com.example.exampleplugin.Example1Plugin"
-}
