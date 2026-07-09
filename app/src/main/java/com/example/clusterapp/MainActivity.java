@@ -21,17 +21,10 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.example.clusterapi.PluginContext;
-import com.example.clusterapp.plugin.PluginInfo;
-import com.example.clusterapp.plugin.PluginRegistry;
-
-import java.io.File;
-
-import java.util.List;
-import java.util.Map;
 
 public class MainActivity extends Activity {
 
-    private static final int MODE_COUNT = 15;
+    private static final int MODE_COUNT = 12;
 
     private static final String[] SCREEN_NAMES = {
         "Placeholder",
@@ -45,21 +38,15 @@ public class MainActivity extends Activity {
         "Audio",
         "ADAS",
         "Maintenance",
-        "Coq",
         "Dashboard",
-        "Beach",
-        "Dashboard 2",
     };
-    private static final int TAB_BUILTIN     = 0;
-    private static final int TAB_PLUGINS     = 1;
-    private static final int TAB_MARKETPLACE = 2;
-    private static final int TAB_SETTINGS    = 3;
-    private static final int TAB_DEVELOPER   = 4;
+    private static final int TAB_BUILTIN  = 0;
+    private static final int TAB_SETTINGS = 1;
 
     private int mSelectedMode = 1;
     private int mCurrentTab   = TAB_BUILTIN;
 
-    private final Button[] mTabButtons = new Button[5];
+    private final Button[] mTabButtons = new Button[2];
 
     private FrameLayout mContentFrame;
     private FrameLayout mSettingsOverlay;
@@ -114,7 +101,7 @@ public class MainActivity extends Activity {
         tabBar.setOrientation(LinearLayout.HORIZONTAL);
         tabBar.setBackgroundColor(0xFF1A1A1A);
 
-        String[] tabLabels = {"Built-in", "Plugins", "Marketplace", "Settings", "Developer"};
+        String[] tabLabels = {"Built-in", "Settings"};
         for (int i = 0; i < tabLabels.length; i++) {
             final int tab = i;
             Button btn = new Button(this);
@@ -130,8 +117,6 @@ public class MainActivity extends Activity {
             mTabButtons[i] = btn;
             tabBar.addView(btn);
         }
-        boolean devMode = AppSettings.getInstance(this).isDeveloperModeEnabled();
-        mTabButtons[TAB_DEVELOPER].setVisibility(devMode ? View.VISIBLE : View.GONE);
 
         root.addView(tabBar, new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
@@ -178,7 +163,6 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        // Re-render the current tab so plugin activation from the Marketplace is reflected.
         renderTab(mCurrentTab);
         applyTabStyles();
         refreshStatus();
@@ -189,11 +173,6 @@ public class MainActivity extends Activity {
     // -------------------------------------------------------------------------
 
     private void selectTab(int tab) {
-        if (tab == TAB_MARKETPLACE) {
-            // Marketplace is a separate Activity; don't switch the content pane.
-            startActivity(new Intent(this, MarketplaceActivity.class));
-            return;
-        }
         mCurrentTab = tab;
         applyTabStyles();
         renderTab(tab);
@@ -205,20 +184,14 @@ public class MainActivity extends Activity {
             mTabButtons[i].setBackgroundColor(active ? 0xFF222222 : 0xFF1A1A1A);
             mTabButtons[i].setTextColor(active ? 0xFFFFFFFF : 0xFF666666);
         }
-        // Always show Marketplace tab in its own colour since it navigates away.
-        mTabButtons[TAB_MARKETPLACE].setTextColor(0xFF1565C0);
     }
 
     private void renderTab(int tab) {
         mContentFrame.removeAllViews();
         if (tab == TAB_BUILTIN) {
             mContentFrame.addView(buildBuiltInTab());
-        } else if (tab == TAB_PLUGINS) {
-            mContentFrame.addView(buildPluginsTab());
         } else if (tab == TAB_SETTINGS) {
             mContentFrame.addView(buildSettingsTab());
-        } else if (tab == TAB_DEVELOPER) {
-            mContentFrame.addView(buildDeveloperTab());
         }
     }
 
@@ -227,30 +200,10 @@ public class MainActivity extends Activity {
     // -------------------------------------------------------------------------
 
     private View buildBuiltInTab() {
-        boolean pluginActive = ClusterDisplayService.sCurrentPluginId != null;
-
         ScrollView scroll = new ScrollView(this);
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
         col.setPadding(dp(12), dp(12), dp(12), dp(12));
-
-        // Active plugin notice
-        if (pluginActive) {
-            PluginRegistry registry = PluginRegistry.getInstance(this);
-            PluginInfo info = registry.getInfo(ClusterDisplayService.sCurrentPluginId);
-            if (info != null) {
-                TextView notice = new TextView(this);
-                notice.setText("● Plugin active: " + info.name
-                    + "  (" + info.author + " / " + info.collection + ")");
-                notice.setTextColor(0xFF4CAF50);
-                notice.setTextSize(11);
-                notice.setGravity(Gravity.CENTER);
-                LinearLayout.LayoutParams noticeLp = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-                noticeLp.setMargins(0, 0, 0, dp(12));
-                col.addView(notice, noticeLp);
-            }
-        }
 
         // 2-column scrollable grid of screen buttons
         for (int i = 0; i < MODE_COUNT; i += 2) {
@@ -259,7 +212,7 @@ public class MainActivity extends Activity {
 
             for (int j = i; j < Math.min(i + 2, MODE_COUNT); j++) {
                 final int mode = j + 1;
-                boolean selected = !pluginActive && (mode == mSelectedMode);
+                boolean selected = (mode == mSelectedMode);
 
                 Button btn = new Button(this);
                 btn.setText(SCREEN_NAMES[j]);
@@ -285,269 +238,6 @@ public class MainActivity extends Activity {
             col.addView(row, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
         }
-
-        scroll.addView(col);
-        return scroll;
-    }
-
-    // -------------------------------------------------------------------------
-    // Tab: Installed plugins
-    // -------------------------------------------------------------------------
-
-    private View buildPluginsTab() {
-        ScrollView scroll = new ScrollView(this);
-        LinearLayout list = new LinearLayout(this);
-        list.setOrientation(LinearLayout.VERTICAL);
-        list.setPadding(dp(12), dp(12), dp(12), dp(12));
-
-        PluginRegistry registry = PluginRegistry.getInstance(this);
-        Map<String, Map<String, List<PluginInfo>>> hierarchy = registry.listInstalledByHierarchy();
-
-        if (hierarchy.isEmpty()) {
-            TextView empty = new TextView(this);
-            empty.setText("No plugins installed.\nOpen the Marketplace tab to find some.");
-            empty.setTextColor(0xFF555555);
-            empty.setTextSize(13);
-            empty.setGravity(Gravity.CENTER);
-            empty.setPadding(0, dp(32), 0, 0);
-            list.addView(empty);
-        } else {
-            for (Map.Entry<String, Map<String, List<PluginInfo>>> authorEntry : hierarchy.entrySet()) {
-                // Author label
-                TextView authorLabel = new TextView(this);
-                authorLabel.setText(authorEntry.getKey().toUpperCase());
-                authorLabel.setTextColor(0xFF666666);
-                authorLabel.setTextSize(10);
-                authorLabel.setTypeface(null, Typeface.BOLD);
-                authorLabel.setPadding(dp(4), dp(12), 0, dp(2));
-                list.addView(authorLabel);
-
-                for (Map.Entry<String, List<PluginInfo>> colEntry : authorEntry.getValue().entrySet()) {
-                    // Collection label
-                    TextView colLabel = new TextView(this);
-                    colLabel.setText("  " + colEntry.getKey());
-                    colLabel.setTextColor(0xFF444444);
-                    colLabel.setTextSize(10);
-                    colLabel.setPadding(dp(12), dp(4), 0, dp(2));
-                    list.addView(colLabel);
-
-                    for (final PluginInfo info : colEntry.getValue()) {
-                        final boolean isActive =
-                            info.id.equals(ClusterDisplayService.sCurrentPluginId);
-
-                        LinearLayout card = new LinearLayout(this);
-                        card.setOrientation(LinearLayout.HORIZONTAL);
-                        card.setBackgroundColor(isActive ? 0xFF1B2E1B : 0xFF1E1E1E);
-                        card.setPadding(dp(14), dp(10), dp(14), dp(10));
-                        card.setGravity(Gravity.CENTER_VERTICAL);
-                        LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(
-                            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-                        cardLp.setMargins(0, dp(2), 0, dp(2));
-                        card.setLayoutParams(cardLp);
-
-                        // Text column
-                        LinearLayout textCol = new LinearLayout(this);
-                        textCol.setOrientation(LinearLayout.VERTICAL);
-
-                        TextView nameView = new TextView(this);
-                        nameView.setText((isActive ? "● " : "") + info.name);
-                        nameView.setTextColor(isActive ? 0xFF4CAF50 : 0xFFEEEEEE);
-                        nameView.setTextSize(14);
-                        nameView.setTypeface(null, Typeface.BOLD);
-                        textCol.addView(nameView);
-
-                        TextView metaView = new TextView(this);
-                        metaView.setText("v" + info.version + (isActive ? "  •  Active" : ""));
-                        metaView.setTextColor(isActive ? 0xFF388E3C : 0xFF888888);
-                        metaView.setTextSize(11);
-                        textCol.addView(metaView);
-
-                        card.addView(textCol, new LinearLayout.LayoutParams(
-                            0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-
-                        // Activate button (hidden when already active)
-                        if (!isActive) {
-                            Button activateBtn = new Button(this);
-                            activateBtn.setText("Activate");
-                            activateBtn.setTextSize(12);
-                            activateBtn.setBackgroundColor(0xFF1565C0);
-                            activateBtn.setTextColor(0xFFFFFFFF);
-                            activateBtn.setPadding(dp(8), 0, dp(8), 0);
-                            LinearLayout.LayoutParams btnLp =
-                                new LinearLayout.LayoutParams(dp(90), dp(36));
-                            btnLp.gravity = Gravity.CENTER_VERTICAL;
-                            card.addView(activateBtn, btnLp);
-                            activateBtn.setOnClickListener(new View.OnClickListener() {
-                                @Override public void onClick(View v) {
-                                    ClusterDisplayService.setPlugin(info.id);
-                                    startService(new Intent(MainActivity.this,
-                                        ClusterDisplayService.class));
-                                    Toast.makeText(MainActivity.this,
-                                        "Now showing: " + info.name, Toast.LENGTH_SHORT).show();
-                                    renderTab(TAB_PLUGINS);
-                                    refreshStatus();
-                                }
-                            });
-                        }
-
-                        list.addView(card);
-                    }
-                }
-            }
-        }
-
-        scroll.addView(list);
-        return scroll;
-    }
-
-    // -------------------------------------------------------------------------
-    // Tab: Developer
-    // -------------------------------------------------------------------------
-
-    private View buildDeveloperTab() {
-        ScrollView scroll = new ScrollView(this);
-        LinearLayout col = new LinearLayout(this);
-        col.setOrientation(LinearLayout.VERTICAL);
-        col.setPadding(dp(24), dp(20), dp(24), dp(20));
-
-        // ── Currently loaded ──────────────────────────────────────────────────
-        TextView loadedHeader = new TextView(this);
-        loadedHeader.setText("CURRENTLY LOADED");
-        loadedHeader.setTextColor(0xFF666666);
-        loadedHeader.setTextSize(10);
-        loadedHeader.setTypeface(null, Typeface.BOLD);
-        loadedHeader.setPadding(0, 0, 0, dp(8));
-        col.addView(loadedHeader);
-
-        PluginInfo dev = ClusterDisplayService.sDevPluginInfo;
-        if (dev != null) {
-            LinearLayout card = new LinearLayout(this);
-            card.setOrientation(LinearLayout.HORIZONTAL);
-            card.setBackgroundColor(0xFF1E2E1E);
-            card.setPadding(dp(14), dp(12), dp(14), dp(12));
-            card.setGravity(Gravity.CENTER_VERTICAL);
-
-            LinearLayout textCol = new LinearLayout(this);
-            textCol.setOrientation(LinearLayout.VERTICAL);
-
-            TextView nameView = new TextView(this);
-            nameView.setText("● " + dev.name);
-            nameView.setTextColor(0xFF4CAF50);
-            nameView.setTextSize(14);
-            nameView.setTypeface(null, Typeface.BOLD);
-            textCol.addView(nameView);
-
-            TextView metaView = new TextView(this);
-            metaView.setText(dev.id + "  •  v" + dev.version);
-            metaView.setTextColor(0xFF777777);
-            metaView.setTextSize(11);
-            textCol.addView(metaView);
-
-            card.addView(textCol, new LinearLayout.LayoutParams(
-                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-
-            Button clearBtn = new Button(this);
-            clearBtn.setText("Clear");
-            clearBtn.setTextSize(12);
-            clearBtn.setAllCaps(false);
-            clearBtn.setBackgroundColor(0xFF7F0000);
-            clearBtn.setTextColor(0xFFCCCCCC);
-            clearBtn.setPadding(dp(8), 0, dp(8), 0);
-            LinearLayout.LayoutParams clearLp = new LinearLayout.LayoutParams(dp(72), dp(34));
-            clearLp.gravity = Gravity.CENTER_VERTICAL;
-            card.addView(clearBtn, clearLp);
-            clearBtn.setOnClickListener(new View.OnClickListener() {
-                @Override public void onClick(View v) {
-                    ClusterDisplayService.clearDevPlugin();
-                    renderTab(TAB_DEVELOPER);
-                    refreshStatus();
-                }
-            });
-
-            LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            cardLp.setMargins(0, 0, 0, dp(16));
-            col.addView(card, cardLp);
-        } else {
-            TextView none = new TextView(this);
-            none.setText("No dev plugin loaded.");
-            none.setTextColor(0xFF555555);
-            none.setTextSize(12);
-            LinearLayout.LayoutParams noneLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            noneLp.setMargins(0, 0, 0, dp(16));
-            col.addView(none, noneLp);
-        }
-
-        // ── Load APK ──────────────────────────────────────────────────────────
-        TextView loadHeader = new TextView(this);
-        loadHeader.setText("LOAD APK");
-        loadHeader.setTextColor(0xFF666666);
-        loadHeader.setTextSize(10);
-        loadHeader.setTypeface(null, Typeface.BOLD);
-        loadHeader.setPadding(0, 0, 0, dp(8));
-        col.addView(loadHeader);
-
-        final EditText pathInput = new EditText(this);
-        pathInput.setHint("/sdcard/app-debug.apk");
-        pathInput.setText("/sdcard/app-debug.apk");
-        pathInput.setTextColor(0xFFFFFFFF);
-        pathInput.setHintTextColor(0xFF444444);
-        pathInput.setBackgroundColor(0xFF2A2A2A);
-        pathInput.setPadding(dp(10), dp(8), dp(10), dp(8));
-        pathInput.setTextSize(12);
-        pathInput.setSingleLine(true);
-        LinearLayout.LayoutParams inputLp = new LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        inputLp.setMargins(0, 0, 0, dp(8));
-        col.addView(pathInput, inputLp);
-
-        final TextView errorText = new TextView(this);
-        errorText.setTextColor(0xFFFF5555);
-        errorText.setTextSize(11);
-        errorText.setVisibility(View.GONE);
-        col.addView(errorText, new LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
-
-        Button loadBtn = new Button(this);
-        loadBtn.setText("Load APK");
-        loadBtn.setTextSize(13);
-        loadBtn.setAllCaps(false);
-        loadBtn.setBackgroundColor(0xFF1565C0);
-        loadBtn.setTextColor(0xFFFFFFFF);
-        loadBtn.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                String path = pathInput.getText().toString().trim();
-                if (path.isEmpty()) {
-                    errorText.setText("Enter an APK path.");
-                    errorText.setVisibility(View.VISIBLE);
-                    return;
-                }
-                java.io.File apkFile = new java.io.File(path);
-                if (!apkFile.isFile()) {
-                    errorText.setText("File not found: " + path);
-                    errorText.setVisibility(View.VISIBLE);
-                    return;
-                }
-                PluginInfo info;
-                try {
-                    info = PluginInfo.readFromApk(apkFile);
-                } catch (Exception e) {
-                    errorText.setText("Could not read plugin.json: " + e.getMessage());
-                    errorText.setVisibility(View.VISIBLE);
-                    return;
-                }
-                errorText.setVisibility(View.GONE);
-                ClusterDisplayService.setDevPlugin(info, apkFile);
-                startService(new Intent(MainActivity.this, ClusterDisplayService.class));
-                renderTab(TAB_DEVELOPER);
-                refreshStatus();
-            }
-        });
-        LinearLayout.LayoutParams loadBtnLp = new LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, dp(44));
-        loadBtnLp.setMargins(0, dp(4), 0, 0);
-        col.addView(loadBtn, loadBtnLp);
 
         scroll.addView(col);
         return scroll;
@@ -661,59 +351,6 @@ public class MainActivity extends Activity {
         camIdHint.setTextColor(0xFF555555);
         camIdHint.setTextSize(10);
         col.addView(camIdHint);
-
-        // ── Section: Developer ────────────────────────────────────────────────
-        TextView devHeader = new TextView(this);
-        devHeader.setText("DEVELOPER");
-        devHeader.setTextColor(0xFF666666);
-        devHeader.setTextSize(10);
-        devHeader.setTypeface(null, Typeface.BOLD);
-        LinearLayout.LayoutParams devHeaderLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        devHeaderLp.setMargins(0, dp(24), 0, dp(8));
-        col.addView(devHeader, devHeaderLp);
-
-        LinearLayout devRow = new LinearLayout(this);
-        devRow.setOrientation(LinearLayout.HORIZONTAL);
-        devRow.setGravity(Gravity.CENTER_VERTICAL);
-        devRow.setBackgroundColor(0xFF1E1E1E);
-        devRow.setPadding(dp(16), dp(14), dp(16), dp(14));
-
-        LinearLayout devText = new LinearLayout(this);
-        devText.setOrientation(LinearLayout.VERTICAL);
-
-        TextView devTitle = new TextView(this);
-        devTitle.setText("Developer Mode");
-        devTitle.setTextColor(0xFFEEEEEE);
-        devTitle.setTextSize(14);
-        devText.addView(devTitle);
-
-        TextView devDesc = new TextView(this);
-        devDesc.setText("Shows a Developer tab for sideloading plugin APKs.");
-        devDesc.setTextColor(0xFF777777);
-        devDesc.setTextSize(10);
-        devText.addView(devDesc);
-
-        devRow.addView(devText, new LinearLayout.LayoutParams(
-                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-
-        Switch devSwitch = new Switch(this);
-        devSwitch.setChecked(settings.isDeveloperModeEnabled());
-        devSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
-            @Override public void onCheckedChanged(CompoundButton btn, boolean checked) {
-                settings.setDeveloperModeEnabled(checked);
-                mTabButtons[TAB_DEVELOPER].setVisibility(checked ? View.VISIBLE : View.GONE);
-                if (!checked && mCurrentTab == TAB_DEVELOPER) {
-                    selectTab(TAB_BUILTIN);
-                }
-            }
-        });
-        devRow.addView(devSwitch, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT));
-
-        col.addView(devRow, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
         scroll.addView(col);
         return scroll;

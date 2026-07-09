@@ -19,18 +19,11 @@ import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.TextView;
 
-import com.example.clusterapp.plugin.PluginInfo;
-import com.example.clusterapp.plugin.PluginLoadException;
-import com.example.clusterapp.plugin.PluginLoader;
-import com.example.clusterapp.plugin.PluginRegistry;
 import com.example.clusterapp.screens.AdasScreen;
 import com.example.clusterapp.screens.AudioScreen;
-import com.example.clusterapp.screens.BeachScreen;
 import com.example.clusterapp.screens.BrakeScreen;
 import com.example.clusterapp.screens.CabinScreen;
-import com.example.clusterapp.screens.CoqScreen;
 import com.example.clusterapp.screens.DashboardScreen;
-import com.example.clusterapp.screens.DashboardScreen2;
 import com.example.clusterapp.screens.DrivetrainScreen;
 import com.example.clusterapp.screens.FuelScreen;
 import com.example.clusterapp.screens.LaneWatchScreen;
@@ -43,22 +36,14 @@ import com.example.clusterapi.ClusterPlugin;
 import com.example.clusterapi.PluginContext;
 import com.example.clusterapi.VehicleSnapshot;
 
-import java.io.File;
-
 public class ClusterDisplayService extends Service {
 
     static volatile String sStatus    = "not started";
     static volatile String sMuxStatus = "not attempted";
 
-    /** ID of the plugin currently shown on the cluster, or null if a built-in is active. */
-    static volatile String sCurrentPluginId = null;
-
-    /** Metadata of the dev-sideloaded plugin, or null if none is loaded. Not persisted. */
-    static volatile PluginInfo sDevPluginInfo = null;
-
-    /** APK path of the currently-active screen (host APK for built-ins, plugin APK for plugins). */
+    /** APK path of the currently-active screen (always the host APK now that plugins are gone). */
     static volatile String sActiveApkPath = null;
-    /** Settings namespace for the currently-active screen (plugin ID, or "builtin.N" for built-ins). */
+    /** Settings namespace for the currently-active screen ("builtin.N"). */
     static volatile String sActiveNamespace = null;
 
     // Pixel offsets within the 800×480 HDMI output that map to the visible cluster area.
@@ -92,14 +77,12 @@ public class ClusterDisplayService extends Service {
     private IBinder          mVidBinder;
     private ClusterPlugin    mActiveScreen;
     private VehicleDataSource mDataSource;
-    private PluginLoader     mPluginLoader;
     private int              mCanvasW;
     private int              mCanvasH;
 
     // Lane Watch override state
-    private boolean mLaneWatchActive      = false;
-    private String  mPreLaneWatchPluginId = null;
-    private int     mPreLaneWatchMode     = 1;
+    private boolean mLaneWatchActive  = false;
+    private int     mPreLaneWatchMode = 1;
 
     private final VehicleDataSource.Listener mDataListener = new VehicleDataSource.Listener() {
         @Override public void onVehicleSnapshotChanged(VehicleSnapshot snapshot) {
@@ -210,8 +193,7 @@ public class ClusterDisplayService extends Service {
             return START_NOT_STICKY;
         }
 
-        sInstance     = this;
-        mPluginLoader = new PluginLoader(this);
+        sInstance = this;
 
         mDataSource = new VehicleDataSource();
         mDataSource.addListener(mDataListener);
@@ -229,14 +211,8 @@ public class ClusterDisplayService extends Service {
             sMuxStatus += " | vid bind FAIL";
         }
 
-        // Restore the last active screen (plugin or built-in mode).
-        PluginRegistry registry = PluginRegistry.getInstance(this);
-        String savedPluginId = registry.getActivePluginId();
-        if (savedPluginId != null && registry.isInstalled(savedPluginId)) {
-            applyPlugin(savedPluginId);
-        } else {
-            applyMode(registry.getActiveMode());
-        }
+        // Restore the last active built-in screen.
+        applyMode(AppSettings.getInstance(this).getActiveMode());
         return START_STICKY;
     }
 
@@ -272,35 +248,9 @@ public class ClusterDisplayService extends Service {
         if (sInstance != null) sInstance.applyMode(mode);
     }
 
-    /** Switch to an installed plugin screen by its plugin ID. */
-    static void setPlugin(String pluginId) {
-        if (sInstance != null) sInstance.applyPlugin(pluginId);
-    }
-
     /** Returns the currently-active screen, or null if the service is not running. */
     static ClusterPlugin getActiveScreen() {
         return sInstance != null ? sInstance.mActiveScreen : null;
-    }
-
-    /**
-     * Load a plugin APK directly without persisting it to the registry.
-     * On next service start the last persisted screen is restored automatically.
-     */
-    static void setDevPlugin(PluginInfo info, File apkFile) {
-        if (sInstance != null) sInstance.applyDevPlugin(info, apkFile);
-    }
-
-    /** Restore the last persisted screen and clear the dev plugin state. */
-    static void clearDevPlugin() {
-        if (sInstance == null) return;
-        sDevPluginInfo = null;
-        PluginRegistry registry = PluginRegistry.getInstance(sInstance);
-        String savedId = registry.getActivePluginId();
-        if (savedId != null && registry.isInstalled(savedId)) {
-            sInstance.applyPlugin(savedId);
-        } else {
-            sInstance.applyMode(registry.getActiveMode());
-        }
     }
 
     // -------------------------------------------------------------------------
@@ -312,8 +262,7 @@ public class ClusterDisplayService extends Service {
         boolean blinkerOn = snapshot.lights.rightBlinker || snapshot.lights.turnRight;
 
         if (enabled && blinkerOn && !mLaneWatchActive) {
-            mPreLaneWatchPluginId = sCurrentPluginId;
-            mPreLaneWatchMode     = PluginRegistry.getInstance(this).getActiveMode();
+            mPreLaneWatchMode = AppSettings.getInstance(this).getActiveMode();
             mLaneWatchActive = true;
             callOpenVideoPath();
             try {
@@ -343,72 +292,24 @@ public class ClusterDisplayService extends Service {
     }
 
     private void restorePreLaneWatch() {
-        if (mPreLaneWatchPluginId != null) {
-            applyPlugin(mPreLaneWatchPluginId);
-        } else {
-            applyMode(mPreLaneWatchMode);
-        }
-    }
-
-    private void applyDevPlugin(PluginInfo info, File apkFile) {
-        mLaneWatchActive = false;
-        ClusterPlugin plugin;
-        try {
-            plugin = mPluginLoader.load(info, apkFile);
-        } catch (PluginLoadException e) {
-            sStatus = "Dev load failed: " + e.getMessage();
-            return;
-        }
-        sDevPluginInfo   = info;
-        sCurrentPluginId = null;
-        sActiveApkPath   = apkFile.getAbsolutePath();
-        sActiveNamespace = info.id;
-        // Intentionally NOT calling registry.setActivePluginId() — no persistence.
-        swapScreen(plugin, sActiveApkPath, sActiveNamespace);
+        applyMode(mPreLaneWatchMode);
     }
 
     private void applyMode(int mode) {
         mLaneWatchActive = false;
-        sCurrentPluginId = null;
         sActiveApkPath   = hostApkPath();
         sActiveNamespace = "builtin." + mode;
-        PluginRegistry.getInstance(this).setActiveMode(mode);
+        AppSettings.getInstance(this).setActiveMode(mode);
         swapScreen(buildScreen(mode), sActiveApkPath, sActiveNamespace);
-    }
-
-    private void applyPlugin(String pluginId) {
-        mLaneWatchActive = false;
-        PluginRegistry registry = PluginRegistry.getInstance(this);
-        PluginInfo info = registry.getInfo(pluginId);
-        if (info == null) {
-            applyMode(1);
-            return;
-        }
-
-        File apkFile = registry.getApkFile(pluginId);
-        ClusterPlugin plugin;
-        try {
-            plugin = mPluginLoader.load(info, apkFile);
-        } catch (PluginLoadException e) {
-            sStatus = "Plugin load failed: " + e.getMessage();
-            plugin  = new PlaceholderScreen(-1);
-            apkFile = new File(hostApkPath());
-        }
-
-        sCurrentPluginId = pluginId;
-        sActiveApkPath   = apkFile.getAbsolutePath();
-        sActiveNamespace = pluginId;
-        PluginRegistry.getInstance(this).setActivePluginId(pluginId);
-        swapScreen(plugin, sActiveApkPath, sActiveNamespace);
     }
 
     /**
      * Replace the active screen.
      *
-     * @param plugin    The screen to show (local built-in or marketplace plugin).
+     * @param plugin    The screen to show.
      * @param apkPath   Absolute path of the APK whose {@code assets/} the screen may read.
      *                  Pass {@link #hostApkPath()} for locally-compiled screens.
-     * @param namespace Settings namespace for this screen (plugin ID or "builtin.N").
+     * @param namespace Settings namespace for this screen ("builtin.N").
      */
     private void swapScreen(ClusterPlugin plugin, String apkPath, String namespace) {
         if (mActiveScreen != null) mActiveScreen.onStop();
@@ -427,7 +328,7 @@ public class ClusterDisplayService extends Service {
 
     /**
      * Maps mode numbers to built-in screen implementations.
-     * Add a new {@code case} here (and copy the class to a plugin APK) to publish a new screen.
+     * Add a new {@code case} here to publish a new screen.
      */
     private ClusterPlugin buildScreen(int mode) {
         switch (mode) {
@@ -442,11 +343,8 @@ public class ClusterDisplayService extends Service {
             case 9:  return new AudioScreen();
             case 10: return new AdasScreen();
             case 11: return new MaintenanceScreen();
-            // ── Visual screens ────────────────────────────────────────────────
-            case 12: return new CoqScreen();
-            case 13: return new DashboardScreen();
-            case 14: return new BeachScreen();
-            case 15: return new DashboardScreen2();
+            // ── Main display ──────────────────────────────────────────────────
+            case 12: return new DashboardScreen();
             default: return new PlaceholderScreen(mode);
         }
     }
