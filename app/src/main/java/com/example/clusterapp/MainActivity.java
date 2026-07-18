@@ -1,6 +1,8 @@
 package com.example.clusterapp;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.app.ProgressDialog;
 import android.content.Intent;
 import android.graphics.Typeface;
 import android.os.Bundle;
@@ -43,12 +45,13 @@ public class MainActivity extends Activity {
         "Climate",
     };
     private static final int TAB_BUILTIN  = 0;
-    private static final int TAB_SETTINGS = 1;
+    private static final int TAB_DEBUG    = 1;
+    private static final int TAB_SETTINGS = 2;
 
     private int mSelectedMode = 1;
     private int mCurrentTab   = TAB_BUILTIN;
 
-    private final Button[] mTabButtons = new Button[2];
+    private final Button[] mTabButtons = new Button[3];
 
     private FrameLayout mContentFrame;
     private FrameLayout mSettingsOverlay;
@@ -103,7 +106,7 @@ public class MainActivity extends Activity {
         tabBar.setOrientation(LinearLayout.HORIZONTAL);
         tabBar.setBackgroundColor(0xFF1A1A1A);
 
-        String[] tabLabels = {"Built-in", "Settings"};
+        String[] tabLabels = {"Built-in", "Debug", "Settings"};
         for (int i = 0; i < tabLabels.length; i++) {
             final int tab = i;
             Button btn = new Button(this);
@@ -160,6 +163,8 @@ public class MainActivity extends Activity {
         mHandler.postDelayed(new Runnable() {
             @Override public void run() { refreshStatus(); }
         }, 4000);
+
+        maybePromptSystemInstall();
     }
 
     @Override
@@ -192,6 +197,8 @@ public class MainActivity extends Activity {
         mContentFrame.removeAllViews();
         if (tab == TAB_BUILTIN) {
             mContentFrame.addView(buildBuiltInTab());
+        } else if (tab == TAB_DEBUG) {
+            mContentFrame.addView(CanDebugView.create(this));
         } else if (tab == TAB_SETTINGS) {
             mContentFrame.addView(buildSettingsTab());
         }
@@ -255,6 +262,59 @@ public class MainActivity extends Activity {
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
         col.setPadding(dp(24), dp(20), dp(24), dp(20));
+
+        // ── Section: System (root) ────────────────────────────────────────────
+        TextView sysHeader = new TextView(this);
+        sysHeader.setText("SYSTEM");
+        sysHeader.setTextColor(0xFF666666);
+        sysHeader.setTextSize(10);
+        sysHeader.setTypeface(null, Typeface.BOLD);
+        sysHeader.setPadding(0, 0, 0, dp(8));
+        col.addView(sysHeader);
+
+        LinearLayout sysRow = new LinearLayout(this);
+        sysRow.setOrientation(LinearLayout.HORIZONTAL);
+        sysRow.setGravity(Gravity.CENTER_VERTICAL);
+        sysRow.setBackgroundColor(0xFF1E1E1E);
+        sysRow.setPadding(dp(16), dp(14), dp(16), dp(14));
+
+        LinearLayout sysText = new LinearLayout(this);
+        sysText.setOrientation(LinearLayout.VERTICAL);
+
+        boolean systemApp = RootInstaller.isSystemApp(this);
+        boolean hasRw = RootInstaller.hasVehicleRw(this);
+
+        TextView sysTitle = new TextView(this);
+        sysTitle.setText("System install (root)");
+        sysTitle.setTextColor(0xFFEEEEEE);
+        sysTitle.setTextSize(14);
+        sysText.addView(sysTitle);
+
+        TextView sysDesc = new TextView(this);
+        sysDesc.setText(systemApp
+                ? ("Installed as system app ✓" + (hasRw ? "   VEHICLE_RW granted ✓" : "   VEHICLE_RW pending"))
+                : "Not a system app — full CAN/HVAC data needs a one-time\nroot install to " + RootInstaller.systemAppDir() + " + reboot.");
+        sysDesc.setTextColor(systemApp ? 0xFF66BB66 : 0xFF777777);
+        sysDesc.setTextSize(10);
+        sysText.addView(sysDesc);
+
+        sysRow.addView(sysText, new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        Button sysBtn = new Button(this);
+        sysBtn.setText(systemApp ? "Reinstall" : "Install");
+        sysBtn.setAllCaps(false);
+        sysBtn.setTextSize(12);
+        sysBtn.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { doSystemInstall(); }
+        });
+        sysRow.addView(sysBtn, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        LinearLayout.LayoutParams sysRowLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        sysRowLp.setMargins(0, 0, 0, dp(20));
+        col.addView(sysRow, sysRowLp);
 
         // ── Section: Camera ───────────────────────────────────────────────────
         TextView cameraHeader = new TextView(this);
@@ -459,6 +519,82 @@ public class MainActivity extends Activity {
         mStatusText.setText(
             "overlay: " + ClusterDisplayService.sStatus
             + "   mux: " + ClusterDisplayService.sMuxStatus);
+    }
+
+    // -------------------------------------------------------------------------
+    // System install (root) — grants VEHICLE_RW so CpuComService / HVAC bind
+    // -------------------------------------------------------------------------
+
+    private static final String PREFS = "cluster_prefs";
+    private static final String KEY_SKIP_INSTALL_PROMPT = "skip_system_install_prompt";
+
+    /** On first run, offer the one-time root self-install unless already system-installed or dismissed. */
+    private void maybePromptSystemInstall() {
+        if (RootInstaller.isSystemApp(this)) return; // already provisioned
+        boolean skip = getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getBoolean(KEY_SKIP_INSTALL_PROMPT, false);
+        if (skip) return;
+
+        new AlertDialog.Builder(this)
+            .setTitle("Enable full vehicle data")
+            .setMessage("To read all CAN and HVAC data, this app must be installed as a system app "
+                    + "(this grants the VEHICLE_RW permission). This requires root and one reboot.\n\n"
+                    + "Install now? You'll be asked to grant root access.")
+            .setPositiveButton("Install", new android.content.DialogInterface.OnClickListener() {
+                @Override public void onClick(android.content.DialogInterface d, int w) { doSystemInstall(); }
+            })
+            .setNegativeButton("Not now", null)
+            .setNeutralButton("Don't ask again", new android.content.DialogInterface.OnClickListener() {
+                @Override public void onClick(android.content.DialogInterface d, int w) {
+                    getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                            .putBoolean(KEY_SKIP_INSTALL_PROMPT, true).apply();
+                }
+            })
+            .show();
+    }
+
+    private void doSystemInstall() {
+        final ProgressDialog pd = ProgressDialog.show(this, null,
+                "Installing as system app…\nGrant root if prompted.", true, false);
+        new Thread(new Runnable() {
+            @Override public void run() {
+                final RootInstaller.Result r = RootInstaller.install(MainActivity.this);
+                mHandler.post(new Runnable() {
+                    @Override public void run() {
+                        try { pd.dismiss(); } catch (Exception ignored) {}
+                        if (r.ok) showRebootDialog(r.targetPath);
+                        else showInstallFailed(r.log);
+                    }
+                });
+            }
+        }).start();
+    }
+
+    private void showRebootDialog(String targetPath) {
+        new AlertDialog.Builder(this)
+            .setTitle("Installed")
+            .setMessage("Copied to " + targetPath + ".\n\nA reboot is required for the system to grant "
+                    + "VEHICLE_RW. Reboot now?")
+            .setPositiveButton("Reboot now", new android.content.DialogInterface.OnClickListener() {
+                @Override public void onClick(android.content.DialogInterface d, int w) {
+                    new Thread(new Runnable() {
+                        @Override public void run() { RootInstaller.reboot(); }
+                    }).start();
+                }
+            })
+            .setNegativeButton("Later", null)
+            .show();
+    }
+
+    private void showInstallFailed(String log) {
+        String msg = log == null ? "Unknown error." : log.trim();
+        if (msg.length() > 900) msg = msg.substring(msg.length() - 900);
+        new AlertDialog.Builder(this)
+            .setTitle("Install failed")
+            .setMessage("Could not install as a system app. Is the device rooted and root granted?\n\n"
+                    + msg)
+            .setPositiveButton("OK", null)
+            .show();
     }
 
     private int dp(int dp) {
