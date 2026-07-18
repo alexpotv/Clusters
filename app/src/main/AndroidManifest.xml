@@ -8,6 +8,15 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
     <uses-permission android:name="android.permission.CAMERA"/>
 
+    <!--
+      Gates CpuComService / VehicleCoordinationService (signatureOrSystem). Granting it
+      requires the app to run privileged: platform-signed, or installed to /system/priv-app
+      on a rooted unit (see reference-docs/can-analysis.md §6.2). With it, the app binds
+      CpuComService directly and receives the raw FCAN/BCAN frame stream (real CAN id + byte[8])
+      that the companion MCU forwards, plus the requestFcan/BcanReceiveData subscription API.
+    -->
+    <uses-permission android:name="com.mitsubishielectric.ada.permission.VEHICLE_RW"/>
+
     <application
         android:label="Clusters"
         android:icon="@mipmap/ic_launcher"

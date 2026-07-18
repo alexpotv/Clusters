@@ -112,6 +112,25 @@ public class VehicleDataSource {
     private static final int DIAG_CANDATA_GET_BCAN   = 3998209;
 
     // -------------------------------------------------------------------------
+    // CpuComService — direct raw-frame access (Tier 1; requires VEHICLE_RW).
+    // Binding this service and registering a listener yields the complete FCAN/BCAN frame
+    // stream the companion MCU forwards — real CAN id + raw byte[8], before VehicleInfoManager
+    // pre-decodes it. See reference-docs/can-analysis.md §3 (transport), §6.2 (bind/register),
+    // §9 (transaction codes).
+    // -------------------------------------------------------------------------
+    private static final String CPU_PKG        = "com.mitsubishielectric.ada.framework.cpucomservice";
+    private static final String CPU_CLS        = CPU_PKG + ".CpuComService";
+    private static final String CPU_DESCRIPTOR = CPU_PKG + ".ICpuComService";
+    private static final String CPU_LST_DESCRIPTOR =
+            CPU_PKG + ".IVehicleInfoManagerApServiceListener";
+    private static final int CPU_TX_REQUEST_BCAN      = 1;   // requestBcanReceiveData(format,id)
+    private static final int CPU_TX_REQUEST_FCAN      = 2;   // requestFcanReceiveData(group)
+    private static final int CPU_TX_REGISTER_CALLBACK = 207; // registerCallbackVehicleInfo(listener)
+    private static final int CPU_TX_UNREGISTER        = 208; // unregisterCallbackVehicleInfo(listener)
+    // FCAN group whose subscription unlocks the stock 11 powertrain/meter frames.
+    private static final int CPU_FCAN_GROUP_POWERTRAIN = 1036;
+
+    // -------------------------------------------------------------------------
     // IAvApService — audio source, volume, mute
     // -------------------------------------------------------------------------
     private static final String AV_PKG        = "com.mitsubishielectric.ada.appservice.avapservice";
@@ -130,6 +149,8 @@ public class VehicleDataSource {
     private IBinder mAvBinder;
     private IBinder mDiagBinder;
     private boolean mDiagBound  = false;
+    private IBinder mCpuBinder;
+    private boolean mCpuBound   = false;
     private int mRefreshRateMs = 250;
     private int mDiagPollTick  = 0;
 
@@ -166,6 +187,33 @@ public class VehicleDataSource {
     private final ConcurrentHashMap<String, Long> mFcanRawChangedAt = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Long> mBcanRawChangedAt = new ConcurrentHashMap<>();
 
+    // Latest raw byte[8] frame per type code, IF the middleware ever forwards one in the Bundle.
+    // On stock firmware layer A pre-decodes to named ints and does NOT carry raw bytes, so these
+    // typically stay empty; captured anyway so the inspector shows the frame whenever it is present.
+    private final ConcurrentHashMap<Integer, byte[]> mFcanFrames = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Integer, byte[]> mBcanFrames = new ConcurrentHashMap<>();
+
+    // ── CpuComService raw-frame stream (Tier 1) ──────────────────────────────
+    // A raw CAN frame exactly as CpuComService delivers it: real CAN id + payload + freshness.
+    public static final class RawFrame {
+        public volatile byte[] data;         // byte[8] payload
+        public volatile int    receiveState; // 2 = stale/absent; any other value = fresh (§3.3)
+        public volatile int    groupOrCycle; // FCAN group number / BCAN cycle time
+        public volatile long   count;        // frames received for this CAN id
+        public volatile long   changedAt;    // wall-clock ms of last payload change
+    }
+    // Latest raw frame per CAN id, split by bus. FCAN keyed by the 11-bit Honda id, BCAN by the
+    // 32-bit body-CAN id. Populated only when CpuComService is bound (VEHICLE_RW granted).
+    private final ConcurrentHashMap<Integer, RawFrame> mCpuFcanFrames = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Integer, RawFrame> mCpuBcanFrames = new ConcurrentHashMap<>();
+
+    public Map<Integer, RawFrame> getCpuFcanFrames() { return mCpuFcanFrames; }
+    public Map<Integer, RawFrame> getCpuBcanFrames() { return mCpuBcanFrames; }
+
+    public volatile boolean cpuComConnected      = false;
+    public volatile int     cpuFcanFrameCallbacks = 0;
+    public volatile int     cpuBcanFrameCallbacks = 0;
+
     public Map<String, double[]> getFcanStats()         { return mFcanStats; }
     public Map<String, double[]> getBcanStats()          { return mBcanStats; }
     public Map<String, double[]> getDiagFcanStats()      { return mDiagFcanStats; }
@@ -175,6 +223,8 @@ public class VehicleDataSource {
     public Map<String, double[]> getBcanRaw()             { return mBcanRaw; }
     public Map<String, Long>     getFcanRawChangedAt()   { return mFcanRawChangedAt; }
     public Map<String, Long>     getBcanRawChangedAt()   { return mBcanRawChangedAt; }
+    public Map<Integer, byte[]>  getFcanFrames()         { return mFcanFrames; }
+    public Map<Integer, byte[]>  getBcanFrames()         { return mBcanFrames; }
 
     public volatile boolean diagDiagConnected = false;
     public volatile int     diagDiagCallbacks = 0;
@@ -315,6 +365,38 @@ public class VehicleDataSource {
         }
     };
 
+    // ── CpuComService raw-frame listener ──────────────────────────────────────
+    //
+    // Descriptor and field order are dictated by the stock firmware (can-analysis.md §3.1/§6.2):
+    // the MCU calls this stub once per forwarded frame. Frame-carrying transactions are FCAN
+    // codes 20–30 (FcanCommonData) and BCAN codes 5, 7, 10–19 (BcanCommonData). Every frame
+    // is delivered with its real CAN id and raw byte[8] payload.
+
+    private final Binder mCpuListener = new Binder() {
+        @Override
+        protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) {
+            boolean fcan = (code >= 20 && code <= 30);
+            boolean bcan = (code == 5 || code == 7 || (code >= 10 && code <= 19));
+            if (!fcan && !bcan) return false;
+            try {
+                data.enforceInterface(CPU_LST_DESCRIPTOR);
+                // {Fcan,Bcan}CommonData field order is load-bearing — read exactly this order (§3.1).
+                int receiveState = data.readInt();
+                int groupOrCycle = data.readInt();   // FCAN groupNumber / BCAN cycleTime
+                data.readInt();                       // method
+                data.readInt();                       // dataLength
+                data.readInt();                       // format
+                int canId        = data.readInt();    // FCAN 11-bit id / BCAN 32-bit id
+                byte[] frame     = data.createByteArray();
+                storeRawFrame(fcan, canId, receiveState, groupOrCycle, frame);
+            } catch (Exception e) {
+                Log.e(TAG, "CpuCom onTransact error code=" + code, e);
+            }
+            if (reply != null) reply.writeNoException();
+            return true;
+        }
+    };
+
     // ── Service connections ───────────────────────────────────────────────────
 
     private final ServiceConnection mVehicleConn = new ServiceConnection() {
@@ -344,6 +426,19 @@ public class VehicleDataSource {
         }
     };
 
+    private final ServiceConnection mCpuConn = new ServiceConnection() {
+        @Override public void onServiceConnected(ComponentName n, IBinder b) {
+            mCpuBinder = b;
+            cpuComConnected = true;
+            registerCpuComListener();
+            widenCpuComSubscriptions();
+        }
+        @Override public void onServiceDisconnected(ComponentName n) {
+            mCpuBinder = null;
+            cpuComConnected = false;
+        }
+    };
+
     // -------------------------------------------------------------------------
     // Public API
     // -------------------------------------------------------------------------
@@ -369,6 +464,15 @@ public class VehicleDataSource {
             Log.w(TAG, "DiagService bind failed: " + e.getMessage());
         }
 
+        try {
+            Intent cpuIntent = new Intent(CPU_DESCRIPTOR);
+            cpuIntent.setComponent(new ComponentName(CPU_PKG, CPU_CLS));
+            mCpuBound = mContext.bindService(cpuIntent, mCpuConn, Context.BIND_AUTO_CREATE);
+            if (!mCpuBound) Log.w(TAG, "CpuComService bind returned false (missing VEHICLE_RW?)");
+        } catch (Exception e) {
+            Log.w(TAG, "CpuComService bind failed: " + e.getMessage());
+        }
+
         mHandler.post(mPollRunnable);
     }
 
@@ -386,6 +490,13 @@ public class VehicleDataSource {
             try { mContext.unbindService(mDiagConn); } catch (Exception ignored) {}
             mDiagBound = false;
             mDiagBinder = null;
+        }
+        if (mCpuBound) {
+            try { unregisterCpuComListener(); } catch (Exception ignored) {}
+            try { mContext.unbindService(mCpuConn); } catch (Exception ignored) {}
+            mCpuBound = false;
+            mCpuBinder = null;
+            cpuComConnected = false;
         }
     }
 
@@ -601,6 +712,112 @@ public class VehicleDataSource {
         if (++mDiagPollTick % 4 == 0) diagPoll();
     }
 
+    // ── CpuComService helpers (Tier 1) ────────────────────────────────────────
+
+    private void registerCpuComListener() {
+        if (mCpuBinder == null) return;
+        Parcel data = Parcel.obtain(), reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(CPU_DESCRIPTOR);
+            data.writeStrongBinder(mCpuListener);
+            mCpuBinder.transact(CPU_TX_REGISTER_CALLBACK, data, reply, 0);
+            reply.readException();
+            Log.d(TAG, "CpuCom registerCallbackVehicleInfo ok");
+        } catch (Exception e) {
+            Log.e(TAG, "CpuCom register error", e);
+        } finally { data.recycle(); reply.recycle(); }
+    }
+
+    private void unregisterCpuComListener() {
+        if (mCpuBinder == null) return;
+        Parcel data = Parcel.obtain(), reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(CPU_DESCRIPTOR);
+            data.writeStrongBinder(mCpuListener);
+            mCpuBinder.transact(CPU_TX_UNREGISTER, data, reply, 0);
+            reply.readException();
+        } catch (Exception ignored) {
+        } finally { data.recycle(); reply.recycle(); }
+    }
+
+    /**
+     * Ask the MCU to forward as much as it will. FCAN is subscribed by group (the powertrain
+     * group unlocks the stock 11 frames); every known FCAN message id is also probed as a group
+     * to try to surface high-value frames (wheel speeds, kinematics, …) — unknown groups are
+     * simply ignored by the firmware. BCAN is subscribed per 32-bit body-CAN id. Each forwarded
+     * frame still carries its own CAN id, so newly-bridged messages just start appearing.
+     */
+    private void widenCpuComSubscriptions() {
+        java.util.HashSet<Integer> groups = new java.util.HashSet<>();
+        groups.add(CPU_FCAN_GROUP_POWERTRAIN);
+        for (CanMessage m : CanDefinitions.FCAN_MESSAGES) groups.add(m.id);
+        for (int g : groups) requestFcanGroup(g);
+
+        int[] bcanIds = {
+            BCAN_ID_VSPNE, BCAN_ID_AT, BCAN_ID_ILLUMI, BCAN_ID_STEERING,
+            BCAN_ID_HLSW_BCM, BCAN_ID_HLSW_ICU, BCAN_ID_MICU_BCM, BCAN_ID_MICU_ICU,
+            BCAN_ID_MAINTENANCE, BCAN_ID_MET_CUSTOM, BCAN_ID_TRICOM,
+            385376848, // VINNO
+            318285722, // PARKSENS
+            318309018, // PARKSENS_TWO
+            318256152, // FOB_ID_BCM
+            // Climate / HVAC BCAN frames (can-analysis.md §7.3) — raw byte[8] ground truth to
+            // complement the decoded values from VehicleCoordinationService.
+            318264145, // BCAN_ID_AC
+            251231057, // ACSTATE
+            251220561, // ACINFO
+            251234129, // ACFB
+            318329173, // ACSW
+            318339669, // ACSET
+            318328917, // ACCOM
+            385438545, // ACDIAG
+        };
+        for (int id : bcanIds) requestBcanId(0, id);
+        Log.d(TAG, "CpuCom widened: " + groups.size() + " FCAN groups, " + bcanIds.length + " BCAN ids");
+    }
+
+    private void requestFcanGroup(int group) {
+        if (mCpuBinder == null) return;
+        Parcel data = Parcel.obtain(), reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(CPU_DESCRIPTOR);
+            data.writeInt(group);
+            mCpuBinder.transact(CPU_TX_REQUEST_FCAN, data, reply, 0);
+            reply.readException();
+        } catch (Exception e) {
+            Log.w(TAG, "requestFcanReceiveData(" + group + ") failed: " + e.getMessage());
+        } finally { data.recycle(); reply.recycle(); }
+    }
+
+    private void requestBcanId(int format, int bcanId) {
+        if (mCpuBinder == null) return;
+        Parcel data = Parcel.obtain(), reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(CPU_DESCRIPTOR);
+            data.writeInt(format);
+            data.writeInt(bcanId);
+            mCpuBinder.transact(CPU_TX_REQUEST_BCAN, data, reply, 0);
+            reply.readException();
+        } catch (Exception e) {
+            Log.w(TAG, "requestBcanReceiveData(" + bcanId + ") failed: " + e.getMessage());
+        } finally { data.recycle(); reply.recycle(); }
+    }
+
+    /** Store a raw frame from the CpuComService up-call stream, tracking freshness per CAN id. */
+    private void storeRawFrame(boolean fcan, int canId, int receiveState, int groupOrCycle, byte[] frame) {
+        if (fcan) cpuFcanFrameCallbacks++; else cpuBcanFrameCallbacks++;
+        if (frame == null) return;
+        ConcurrentHashMap<Integer, RawFrame> map = fcan ? mCpuFcanFrames : mCpuBcanFrames;
+        RawFrame rf = map.get(canId);
+        if (rf == null) { rf = new RawFrame(); map.put(canId, rf); }
+        boolean changed = rf.data == null || !java.util.Arrays.equals(rf.data, frame);
+        rf.data         = frame;
+        rf.receiveState = receiveState;
+        rf.groupOrCycle = groupOrCycle;
+        rf.count++;
+        if (changed) rf.changedAt = System.currentTimeMillis();
+    }
+
     // ── IDiagService helpers ──────────────────────────────────────────────────
 
     private void diagInitialize() {
@@ -793,6 +1010,7 @@ public class VehicleDataSource {
         byte[] frame = extractFrame(info);
         diagFcanHasRawFrame = (frame != null);
         if (frame != null) {
+            mFcanFrames.put(type, frame);
             Map<String, Double> decoded = CanDecoder.decode(type, frame, CanDefinitions.FCAN_MESSAGES);
             for (Map.Entry<String, Double> e : decoded.entrySet()) {
                 mFcanValues.put(e.getKey(), e.getValue());
@@ -857,6 +1075,7 @@ public class VehicleDataSource {
         byte[] frame = extractFrame(info);
         diagBcanHasRawFrame = (frame != null);
         if (frame != null) {
+            mBcanFrames.put(type, frame);
             Map<String, Double> decoded = CanDecoder.decode(type, frame, CanDefinitions.BCAN_MESSAGES);
             for (Map.Entry<String, Double> e : decoded.entrySet()) {
                 mBcanValues.put(e.getKey(), e.getValue());

@@ -23,6 +23,8 @@ import com.example.clusterapp.screens.AdasScreen;
 import com.example.clusterapp.screens.AudioScreen;
 import com.example.clusterapp.screens.BrakeScreen;
 import com.example.clusterapp.screens.CabinScreen;
+import com.example.clusterapp.screens.CanDataScreen;
+import com.example.clusterapp.screens.ClimateScreen;
 import com.example.clusterapp.screens.DashboardScreen;
 import com.example.clusterapp.screens.DrivetrainScreen;
 import com.example.clusterapp.screens.FuelScreen;
@@ -77,6 +79,7 @@ public class ClusterDisplayService extends Service {
     private IBinder          mVidBinder;
     private ClusterPlugin    mActiveScreen;
     private VehicleDataSource mDataSource;
+    private ClimateDataSource mClimateSource;
     private int              mCanvasW;
     private int              mCanvasH;
 
@@ -199,6 +202,9 @@ public class ClusterDisplayService extends Service {
         mDataSource.addListener(mDataListener);
         mDataSource.start(this);
 
+        mClimateSource = new ClimateDataSource();
+        mClimateSource.start(this);
+
         sMuxStatus = "binding…";
         Intent extIntent = new Intent();
         extIntent.setComponent(new ComponentName(EXT_PKG, EXT_CLS));
@@ -220,6 +226,7 @@ public class ClusterDisplayService extends Service {
     public void onDestroy() {
         if (mActiveScreen != null) { mActiveScreen.onStop(); mActiveScreen = null; }
         if (mDataSource    != null) { mDataSource.stop();    mDataSource    = null; }
+        if (mClimateSource != null) { mClimateSource.stop(); mClimateSource = null; }
         sInstance = null;
         if (mExtBinder != null) {
             try { unbindService(mExtConn); } catch (Exception ignored) {}
@@ -345,6 +352,10 @@ public class ClusterDisplayService extends Service {
             case 11: return new MaintenanceScreen();
             // ── Main display ──────────────────────────────────────────────────
             case 12: return new DashboardScreen();
+            // ── Full live-CAN inspector ───────────────────────────────────────
+            case 13: return new CanDataScreen();
+            // ── HVAC / climate (VehicleCoordinationService) ───────────────────
+            case 14: return new ClimateScreen();
             default: return new PlaceholderScreen(mode);
         }
     }

@@ -33,6 +33,14 @@ public final class CanDecoder {
         return Collections.emptyMap();
     }
 
+    /** First message with the given ID in the list, or null if none defines it. */
+    public static CanMessage messageById(int msgId, List<CanMessage> messages) {
+        for (CanMessage msg : messages) {
+            if (msg.id == msgId) return msg;
+        }
+        return null;
+    }
+
     private static Map<String, Double> decodeMessage(byte[] frame, CanMessage msg) {
         Map<String, Double> result = new HashMap<>();
         for (CanSignal sig : msg.signals) {

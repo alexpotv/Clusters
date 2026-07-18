@@ -24,7 +24,7 @@ import com.example.clusterapi.PluginContext;
 
 public class MainActivity extends Activity {
 
-    private static final int MODE_COUNT = 12;
+    private static final int MODE_COUNT = 14;
 
     private static final String[] SCREEN_NAMES = {
         "Placeholder",
@@ -39,6 +39,8 @@ public class MainActivity extends Activity {
         "ADAS",
         "Maintenance",
         "Dashboard",
+        "CAN Data",
+        "Climate",
     };
     private static final int TAB_BUILTIN  = 0;
     private static final int TAB_SETTINGS = 1;
