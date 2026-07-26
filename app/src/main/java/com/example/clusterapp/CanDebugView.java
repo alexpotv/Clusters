@@ -56,13 +56,15 @@ public final class CanDebugView {
         final Set<Integer> fcanIds;
         final Set<Integer> bcanIds;
         final boolean climate;   // render ClimateDataSource (HVAC) before the raw frames
+        final boolean ecoTrip;   // render EcoTripDataSource (fuel economy / trips / eco scores)
         final boolean catchAll;  // show every id not claimed by a named group
 
-        Group(String label, int[] fcan, int[] bcan, boolean climate, boolean catchAll) {
+        Group(String label, int[] fcan, int[] bcan, boolean climate, boolean ecoTrip, boolean catchAll) {
             this.label    = label;
             this.fcanIds  = toSet(fcan);
             this.bcanIds  = toSet(bcan);
             this.climate  = climate;
+            this.ecoTrip  = ecoTrip;
             this.catchAll = catchAll;
         }
         private static Set<Integer> toSet(int[] a) {
@@ -89,17 +91,18 @@ public final class CanDebugView {
 
     private static final List<Group> GROUPS = Arrays.asList(
             new Group("Powertrain", new int[]{344, 380, 401, 777, 1036},
-                    new int[]{B_VSPNE, B_AT}, false, false),
-            new Group("Brakes", new int[]{420}, new int[]{}, false, false),
-            new Group("Steering", new int[]{427}, new int[]{B_STEERING}, false, false),
+                    new int[]{B_VSPNE, B_AT}, false, false, false),
+            new Group("Brakes", new int[]{420}, new int[]{}, false, false, false),
+            new Group("Steering", new int[]{427}, new int[]{B_STEERING}, false, false, false),
             new Group("Lights", new int[]{806, 884},
-                    new int[]{B_HLSW_BCM, B_HLSW_ICU, B_MICU_BCM, B_MICU_ICU, B_ILLUMI}, false, false),
-            new Group("ADAS", new int[]{829, 460}, new int[]{B_MET_CUSTOM}, false, false),
-            new Group("Maint/Fuel", new int[]{}, new int[]{B_MAINTENANCE, B_TRICOM}, false, false),
+                    new int[]{B_HLSW_BCM, B_HLSW_ICU, B_MICU_BCM, B_MICU_ICU, B_ILLUMI}, false, false, false),
+            new Group("ADAS", new int[]{829, 460}, new int[]{B_MET_CUSTOM}, false, false, false),
+            new Group("Maint/Fuel", new int[]{}, new int[]{B_MAINTENANCE, B_TRICOM}, false, false, false),
+            new Group("Eco/Trip", new int[]{}, new int[]{}, false, true, false),
             new Group("Identity", new int[]{},
-                    new int[]{B_VINNO, B_FOB, B_PARKSENS, B_PARKSENS2}, false, false),
-            new Group("HVAC", new int[]{}, HVAC_BCAN, true, false),
-            new Group("Other", new int[]{}, new int[]{}, false, true)
+                    new int[]{B_VINNO, B_FOB, B_PARKSENS, B_PARKSENS2}, false, false, false),
+            new Group("HVAC", new int[]{}, HVAC_BCAN, true, false, false),
+            new Group("Other", new int[]{}, new int[]{}, false, false, true)
     );
 
     // Ids claimed by any named (non-catch-all) group — excluded from "Other".
@@ -262,10 +265,21 @@ public final class CanDebugView {
         if (g.climate) {
             renderClimate(mContent, now);
         }
+        if (g.ecoTrip) {
+            renderEcoTrip(mContent, now);
+        }
 
         if (g.catchAll) {
             renderCatchAll(ctx, ds, now);
         } else {
+            // The VIN is reassembled across multiple VINNO frames — show the decoded string
+            // alongside the raw per-byte signals in whichever group carries the VINNO id.
+            if (g.bcanIds.contains(B_VINNO)) {
+                String vin = ds.getVin();
+                addBusHeader(ctx, "VIN");
+                mContent.addView(kvRow(ctx, "Vehicle VIN",
+                        vin == null || vin.isEmpty() ? "(assembling…)" : vin, 0));
+            }
             if (!g.fcanIds.isEmpty()) {
                 addBusHeader(ctx, "FCAN");
                 for (int id : g.fcanIds) renderId(ctx, ds, true, id, now);
@@ -382,6 +396,38 @@ public final class CanDebugView {
                 content.addView(kvRow(ctx, "sensor " + id, v == null ? "—" : String.valueOf(v), age));
             }
         }
+    }
+
+    // ── Eco / Trip (separate service; see EcoTripDataSource) ───────────────────
+
+    private void renderEcoTrip(LinearLayout content, long now) {
+        Context ctx = content.getContext();
+        addBusHeader(ctx, "Eco / Trip (VehicleCoordinationService)");
+
+        EcoTripDataSource es = EcoTripDataSource.getInstance();
+        if (es == null) { addNote(content, "  eco/trip source not started"); return; }
+
+        TextView st = new TextView(ctx);
+        st.setTextColor(0xFF888888);
+        st.setTextSize(9);
+        st.setText("  " + (es.connected ? "connected" : "not connected (needs VEHICLE_RW)")
+                + "   fuel cb=" + es.fuelCallbacks
+                + "   (values best-effort until confirmed on the car)");
+        content.addView(st);
+
+        long age = es.lastUpdateMs > 0 ? now - es.lastUpdateMs : Long.MAX_VALUE;
+        content.addView(kvRow(ctx, "Instant fuel eff", etVal(es.instantFuelEff)
+                + unitSuffix(es.instantFuelEffUnit), age));
+        content.addView(kvRow(ctx, "Average fuel eff", etVal(es.averageFuelEff)
+                + unitSuffix(es.averageFuelEffUnit), age));
+        content.addView(kvRow(ctx, "Distance to empty", etVal(es.distanceToEmpty)
+                + unitSuffix(es.distanceToEmptyUnit), age));
+        content.addView(kvRow(ctx, "Trip A meter", etVal(es.tripAMeter), age));
+        content.addView(kvRow(ctx, "Trip A avg fuel eff", etVal(es.tripAAvgFuelEff), age));
+        content.addView(kvRow(ctx, "Eco score", etVal(es.ecoScore), age));
+        content.addView(kvRow(ctx, "Eco class", etVal(es.ecoClass), age));
+        content.addView(kvRow(ctx, "Eco life score", etVal(es.ecoLifeScore), age));
+        content.addView(kvRow(ctx, "Fuel (push)", etVal(es.pushFuelValue), age));
     }
 
     // ── Row builders ──────────────────────────────────────────────────────────
@@ -510,6 +556,14 @@ public final class CanDebugView {
     }
 
     private static String onOff(int v) { return v < 0 ? "—" : (v == 0 ? "off" : "on"); }
+
+    /** EcoTrip fields use Integer.MIN_VALUE as the "unset" sentinel. */
+    private static String etVal(int v) { return v == Integer.MIN_VALUE ? "—" : String.valueOf(v); }
+
+    /** Show the raw unit selector byte, e.g. " [u2]", so the true unit can be identified live. */
+    private static String unitSuffix(int unit) {
+        return unit == Integer.MIN_VALUE ? "" : "  [u" + unit + "]";
+    }
 
     private static String intOrDash(int v) { return v < 0 ? "—" : String.valueOf(v); }
 

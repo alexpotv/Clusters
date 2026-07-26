@@ -98,6 +98,7 @@ public class VehicleDataSource {
     private static final int BCAN_ID_MICU_ICU   = 318246928;
     private static final int BCAN_ID_MAINTENANCE = 318334800; // oil life, service interval
     private static final int BCAN_ID_MET_CUSTOM  = 318336336; // ADAS display settings (CMBS, LKAS, RDM)
+    private static final int BCAN_ID_VINNO       = 385376848; // VIN broadcast (multi-frame ASCII)
 
     // -------------------------------------------------------------------------
     // IDiagService — CAN signal polling (FCAN + BCAN)
@@ -156,6 +157,12 @@ public class VehicleDataSource {
 
     private volatile int mBcanRange = -1;
     private volatile int mBcanRangeUnit = 0;
+
+    // VIN reassembly: BCAN VINNO delivers 6 ASCII bytes per frame, indexed by C_VINDATACOUNT.
+    // Slots 0..17 cover the first three frames (the 17-char VIN + one pad); 0 = not yet received.
+    private final int[] mVinSlots = new int[18];
+    private volatile String mVin = "";
+    public String getVin() { return mVin; }
 
     // Decoded CAN signal values, keyed by signal name.
     // Updated from binder callbacks (any thread); read in poll() (main thread).
@@ -1066,6 +1073,8 @@ public class VehicleDataSource {
             count += putBcanRaw("CMBS_DISTANCE", info, "C_MET_CUSTOM_CMBS_DISTANCE");
             count += putBcanRaw("LKAS_BUZZER",   info, "C_MET_CUSTOM_LKAS_BUZZER_STATUS");
             count += putBcanRaw("RDM_STATUS",    info, "C_MET_CUSTOM_RDM_STATUS");
+        } else if (type == BCAN_ID_VINNO) {
+            count += handleVin(info);
         }
 
         // Record every integer-valued key for raw signal discovery.
@@ -1129,6 +1138,47 @@ public class VehicleDataSource {
             sb.append(t).append("(0x").append(Integer.toHexString(t)).append(')');
         }
         return sb.toString();
+    }
+
+    /**
+     * Reassemble the VIN from a BCAN VINNO frame (can-analysis.md §4.2). Each frame carries a
+     * frame index ({@code C_VINDATACOUNT}) and six ASCII bytes ({@code C_VINBYTE2..7}); the first
+     * three frames (indices 0–2) spell the 17-char VIN. Bytes are stored into fixed slots and the
+     * VIN is published only once all 17 slots hold valid VIN characters, so partial/garbage frames
+     * never surface. The exact frame-to-offset mapping is inferred (the live capture had the VIN
+     * idle), so treat this as best-effort until confirmed on the car.
+     */
+    private int handleVin(Bundle info) {
+        int dc = info.getInt("C_VINDATACOUNT", -1);
+        if (dc < 0 || dc > 2) return 0; // only the first three frames carry the 17-char VIN
+        int base = dc * 6;
+        int[] b = {
+            info.getInt("C_VINBYTE2", -1), info.getInt("C_VINBYTE3", -1),
+            info.getInt("C_VINBYTE4", -1), info.getInt("C_VINBYTE5", -1),
+            info.getInt("C_VINBYTE6", -1), info.getInt("C_VINBYTE7", -1),
+        };
+        int stored = 0;
+        for (int i = 0; i < 6; i++) {
+            if (isVinChar(b[i])) { mVinSlots[base + i] = b[i]; stored++; }
+        }
+        if (stored > 0) assembleVin();
+        return stored;
+    }
+
+    private void assembleVin() {
+        StringBuilder sb = new StringBuilder(17);
+        for (int i = 0; i < 17; i++) {
+            int c = mVinSlots[i];
+            if (!isVinChar(c)) return; // not fully/validly received yet
+            sb.append((char) c);
+        }
+        mVin = sb.toString();
+    }
+
+    /** True for the ISO-3779 VIN character set (0-9, A-Z excluding I, O, Q). */
+    private static boolean isVinChar(int c) {
+        return (c >= '0' && c <= '9')
+                || (c >= 'A' && c <= 'Z' && c != 'I' && c != 'O' && c != 'Q');
     }
 
     /** Decode Honda CVT shift-gate individual bits to DBC GEAR_SHIFTER enum values. */

@@ -80,6 +80,7 @@ public class ClusterDisplayService extends Service {
     private ClusterPlugin    mActiveScreen;
     private VehicleDataSource mDataSource;
     private ClimateDataSource mClimateSource;
+    private EcoTripDataSource mEcoTripSource;
     private int              mCanvasW;
     private int              mCanvasH;
 
@@ -205,6 +206,9 @@ public class ClusterDisplayService extends Service {
         mClimateSource = new ClimateDataSource();
         mClimateSource.start(this);
 
+        mEcoTripSource = new EcoTripDataSource();
+        mEcoTripSource.start(this);
+
         sMuxStatus = "binding…";
         Intent extIntent = new Intent();
         extIntent.setComponent(new ComponentName(EXT_PKG, EXT_CLS));
@@ -227,6 +231,7 @@ public class ClusterDisplayService extends Service {
         if (mActiveScreen != null) { mActiveScreen.onStop(); mActiveScreen = null; }
         if (mDataSource    != null) { mDataSource.stop();    mDataSource    = null; }
         if (mClimateSource != null) { mClimateSource.stop(); mClimateSource = null; }
+        if (mEcoTripSource != null) { mEcoTripSource.stop(); mEcoTripSource = null; }
         sInstance = null;
         if (mExtBinder != null) {
             try { unbindService(mExtConn); } catch (Exception ignored) {}
